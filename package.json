@@ -1,0 +1,27 @@
+{
+  "name": "hermes-skins",
+  "version": "1.0.0",
+  "description": "Skin Center and Custom Wallpaper/Backdrop Plugin for Hermes Desktop, inspired by dsh-skins",
+  "main": "plugin.js",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.js",
+    "install:desktop": "node scripts/install-local.js"
+  },
+  "keywords": [
+    "hermes",
+    "hermes-desktop",
+    "hermes-agent",
+    "skins",
+    "themes",
+    "wallpaper",
+    "skin-center",
+    "ui-plugin"
+  ],
+  "author": "CaptainMusX",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/CaptainMusX/hermes-skins.git"
+  }
+}
