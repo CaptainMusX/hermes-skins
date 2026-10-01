@@ -4,6 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createHash } from 'node:crypto'
 import { deflateRawSync } from 'node:zlib'
+import { LICENSE_FILES } from './license-files.js'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const metadata = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
@@ -13,7 +14,7 @@ const output = path.join(root, 'dist', `${folder}-windows.zip`)
 const files = new Map()
 const whitelist = [
   'plugin.js', 'LICENSE', 'patches/hermes-desktop-terminal-alpha.patch',
-  'scripts/install-local.js', 'scripts/install-windows.cmd',
+  'scripts/install-local.js', 'scripts/install-windows.cmd', 'scripts/license-files.js',
   'backend/manifest.json', 'backend/plugin_api.py', 'backend/scene-helper.mjs', 'backend/plugin.yaml', 'backend/__init__.py',
   'third_party/dsh-skins/LICENSE', 'third_party/dsh-skins/NOTICE.md', 'third_party/jpeg-js/LICENSE'
 ]
@@ -24,13 +25,14 @@ function include(source, target = source) {
   files.set(target, fs.readFileSync(full))
 }
 for (const source of whitelist) include(source)
+for (const [source] of LICENSE_FILES) include(source)
 include('docs/INSTALL.zh.md', 'INSTALL.zh.md')
 include('docs/INSTALL.md', 'INSTALL.md')
 if (files.get('plugin.js').length > 512 * 1024) throw new Error('Desktop plugin exceeds the host size limit')
 files.set('install.cmd', Buffer.from('@echo off\r\ncall "%~dp0scripts\\install-windows.cmd" %*\r\n'))
 files.set('package.json', Buffer.from(JSON.stringify({
   name: metadata.name, version: metadata.version, private: true, type: 'module', main: 'plugin.js',
-  engines: metadata.engines, scripts: { 'install:desktop': 'node scripts/install-local.js' }
+  license: metadata.license, engines: metadata.engines, scripts: { 'install:desktop': 'node scripts/install-local.js' }
 }, null, 2) + '\n'))
 const digest = bytes => createHash('sha256').update(bytes).digest('hex')
 files.set('PACKAGE-MANIFEST.json', Buffer.from(JSON.stringify({

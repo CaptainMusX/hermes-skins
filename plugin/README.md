@@ -16,4 +16,4 @@ hermes plugins install CaptainMusX/hermes-skins/plugin --enable
 
 This prebuilt native Hermes package contains `desktop/plugin.js` and `dashboard/` surfaces. Install it using the CLI command above or Desktop's **Install from Git** dialog. No npm build step is required. Reopen Hermes after the first installation; then use **Skin Center** in the sidebar. Private repositories require access on the target device.
 
-Project license: MIT. Third-party license notices are shipped in both surface directories.
+Original project code: MIT. Third-party portions keep their respective licenses; see LICENSING.md and THIRD-PARTY-NOTICES.md. Complete license materials are shipped in both surface directories.

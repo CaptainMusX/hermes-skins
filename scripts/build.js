@@ -46,6 +46,12 @@ const bundled = `/**
  * Standalone Desktop Plugin for Hermes Desktop.
  * Provides skin gallery, custom wallpaper/video engine, glassmorphism translucency,
  * try-on/apply workflows, and theme studio.
+ *
+ * Third-party portions: dsh-skins, pinned at 82f42bd3bf91ea88475e59a2753f87041a960a56.
+ * Copyright (c) 2026, zhu1090093659; historical notice: dsh-external contributors.
+ * Changes in this generated file: vendor imports/exports removed and modules concatenated;
+ * Hermes adapters are added in project-owned modules. Vendor source is otherwise preserved.
+ * See LICENSING.md, THIRD-PARTY-NOTICES.md and the accompanying complete license texts.
  */
 
 import {
@@ -88,7 +94,7 @@ ${stripImportsAndExports(watcherCode)}
 // ─── Submodule: Wallpaper Engine Library ─────────────────────
 ${stripImportsAndExports(weLibraryCode)}
 
-// ─── Third-party MIT WebGL player from dsh-skins ─────────────
+// ─── Explicitly MIT-marked WebGL player from dsh-skins ──────
 ${stripImportsAndExports(playerCode)}
 
 ${stripImportsAndExports(shimCode)}

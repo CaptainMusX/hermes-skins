@@ -1,6 +1,8 @@
 # Hermes 皮肤中心
 
-Hermes Desktop 插件：六款内置主题、自定义配色工坊，以及 Wallpaper Engine 本地库浏览与壁纸选用。
+Hermes Desktop 插件：六款内置主题、自定义配色工坊，以及 Wallpaper Engine 本地库浏览与壁纸选用。此仓库公开，普通 Git 安装无需仓库访问令牌。
+
+许可范围见 [LICENSING.md](LICENSING.md)，第三方版权与修改说明见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。本项目独立开发，第三方源码保留其原有许可，不代表相关作者或软件的官方背书。个人媒体不随插件分发。
 
 ## 主要行为
 
@@ -20,7 +22,7 @@ Hermes Desktop 插件：六款内置主题、自定义配色工坊，以及 Wall
 hermes plugins install CaptainMusX/hermes-skins/plugin --enable
 ```
 
-或在 **技能与工具 → 插件 → Git 安装** 中输入 `CaptainMusX/hermes-skins/plugin`，安装并启用桌面组件与后端。包已预构建，无需 npm、手工复制或自定义安装脚本；首次安装后重新打开 Hermes，并重启网关加载场景接口。更新使用 `hermes plugins update hermes-skins`。私有仓库需要目标设备已有访问权限。
+或在 **技能与工具 → 插件 → Git 安装** 中输入 `CaptainMusX/hermes-skins/plugin`，安装并启用桌面组件与后端。包已预构建，无需 npm、手工复制或自定义安装脚本；首次安装后重新打开 Hermes，并重启网关加载场景接口。更新使用 `hermes plugins update hermes-skins`。
 
 详见 [安装与迁移指南](docs/INSTALL.zh.md)。当前尚未上架“发现”列表，直接通过“Git 安装”使用；目录审核对内嵌壁纸播放器还有额外规则。
 

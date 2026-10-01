@@ -6,6 +6,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import { fileURLToPath } from 'node:url'
+import { LICENSE_FILES } from './license-files.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const rootDir = path.resolve(__dirname, '..')
@@ -21,12 +22,7 @@ for (const arg of args) {
 }
 const frontendOnly = args.has('--frontend-only')
 const noEnable = args.has('--no-enable')
-const frontendNotices = [
-  ['LICENSE', 'LICENSE'],
-  ['third_party/dsh-skins/LICENSE', 'LICENSE.dsh-skins'],
-  ['third_party/dsh-skins/NOTICE.md', 'NOTICE.dsh-skins.md'],
-  ['third_party/jpeg-js/LICENSE', 'LICENSE.jpeg-js']
-]
+const frontendNotices = LICENSE_FILES
 // Validate the whole payload before touching an existing installation.
 const required = ['plugin.js', ...frontendNotices.map(([source]) => source)]
 if (!frontendOnly) required.push(...['manifest.json', 'plugin_api.py', 'scene-helper.mjs', 'plugin.yaml', '__init__.py'].map(name => `backend/${name}`))
@@ -119,10 +115,7 @@ for (const name of ['manifest.json', 'plugin_api.py', 'scene-helper.mjs']) {
   if (!fs.existsSync(sourceFile)) throw new Error(`Missing built backend file: ${sourceFile}`)
   copyWithBackup(sourceFile, path.join(backendDir, name))
 }
-for (const name of ['LICENSE', 'NOTICE.md']) {
-  copyWithBackup(path.join(rootDir, 'third_party', 'dsh-skins', name), path.join(backendDir, name))
-}
-copyWithBackup(path.join(rootDir, 'third_party/jpeg-js/LICENSE'), path.join(backendDir, 'LICENSE.jpeg-js'))
+for (const [relative, name] of LICENSE_FILES) copyWithBackup(path.join(rootDir, relative), path.join(backendDir, name))
 // plugin.yaml + __init__.py make the plugin a first-class PluginManager
 // package, so the enable below goes through the official PM admission
 // transaction. A raw config.yaml edit alone is not durable: host config

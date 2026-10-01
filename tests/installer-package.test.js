@@ -67,6 +67,8 @@ test('incomplete packages fail before writing to the target installation', () =>
     const pkg = path.join(dir, 'package')
     fs.mkdirSync(path.join(pkg, 'scripts'), { recursive: true })
     fs.copyFileSync(path.join(root, 'scripts/install-local.js'), path.join(pkg, 'scripts/install-local.mjs'))
+    fs.copyFileSync(path.join(root, 'scripts/license-files.js'), path.join(pkg, 'scripts/license-files.js'))
+    fs.writeFileSync(path.join(pkg, 'package.json'), '{"type":"module"}')
     fs.copyFileSync(path.join(root, 'plugin.js'), path.join(pkg, 'plugin.js'))
     const home = path.join(dir, 'untouched-home')
     const result = run(home, ['--no-enable'], path.join(pkg, 'scripts/install-local.mjs'))

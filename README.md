@@ -1,6 +1,8 @@
 # Hermes Skins
 
-A desktop plugin for Hermes with six built-in themes, a small custom-theme studio, and a Wallpaper Engine library browser.
+A desktop plugin for Hermes with six built-in themes, a small custom-theme studio, and a Wallpaper Engine library browser. This repository is public; normal Git installs do not require repository-access credentials.
+
+See [licensing scope](LICENSING.md) and [third-party notices](THIRD-PARTY-NOTICES.md). Original project code is MIT; third-party portions retain their own terms. This independent project is not endorsed by the referenced authors or products, and user media is not distributed with it.
 
 ## How it works
 
