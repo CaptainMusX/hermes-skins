@@ -12,7 +12,19 @@ Hermes Desktop 插件：六款内置主题、自定义配色工坊，以及 Wall
 - 插件重载或禁用时，会移除自身壁纸、样式和未提交的预览。
 - 全新安装保留 Hermes 当前主题，自动优化滑动条，不自动开启壁纸；升级时已有数值原样保留，所有百分比参数均开放完整 0-100 区间。
 
-## 构建与安装
+## 安装（推荐）
+
+一句命令安装前端与壁纸后端：
+
+```sh
+hermes plugins install CaptainMusX/hermes-skins/plugin --enable
+```
+
+或在 **技能与工具 → 插件 → Git 安装** 中输入 `CaptainMusX/hermes-skins/plugin`，安装并启用桌面组件与后端。包已预构建，无需 npm、手工复制或自定义安装脚本；首次安装后重新打开 Hermes，并重启网关加载场景接口。更新使用 `hermes plugins update hermes-skins`。私有仓库需要目标设备已有访问权限。
+
+详见 [安装与迁移指南](docs/INSTALL.zh.md)。当前尚未上架“发现”列表，直接通过“Git 安装”使用；目录审核对内嵌壁纸播放器还有额外规则。
+
+## 开发与离线安装
 
 ```sh
 npm run build
@@ -26,7 +38,7 @@ npm run install:desktop
 
 ## 分发到其他设备
 
-当前安装包面向 Windows，实机验证宿主为 Hermes Desktop 0.21.5+3337，需要 Node.js 22+。运行 `npm run package:desktop` 会在 `dist/` 生成包含已构建插件、场景后端、安装脚本和许可文件的 ZIP，以及 SHA-256 校验文件。
+当前本地媒体功能面向 Windows，实机验证宿主为 Hermes Desktop 0.21.5+3337。推荐目标设备直接执行上面的原生插件安装命令；场景解包使用宿主自带或 PATH 中的 Node。运行 `npm run package:desktop` 仍可生成需要 Node.js 22+ 安装的离线 ZIP，以及 SHA-256 校验文件。
 
 目标设备解压后双击 `install.cmd`；不需要安装构建依赖或重新编译。仓库也保留了构建产物，从 GitHub 下载源码 ZIP 后可直接运行 `node scripts/install-local.js`。自定义数据目录通过 `HERMES_HOME` 指定；`--frontend-only` 可仅安装前端，`--no-enable` 可留待手动启用后端。
 

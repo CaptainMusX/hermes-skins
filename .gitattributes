@@ -1,0 +1,2 @@
+# Preserve identical prebuilt desktop entry bytes when Hermes adopts a manual copy.
+plugin/** text eol=lf

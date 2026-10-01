@@ -5,7 +5,7 @@
   "main": "plugin.js",
   "type": "module",
   "scripts": {
-    "build": "node scripts/build.js && node scripts/build-scene-helper.js",
+    "build": "node scripts/build.js && node scripts/build-scene-helper.js && node scripts/build-native-package.js",
     "pretest": "npm run build",
     "test": "node --test tests/*.test.js",
     "audit:wallpaper-engine": "node scripts/audit-we-local.js",

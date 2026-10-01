@@ -12,7 +12,17 @@ A desktop plugin for Hermes with six built-in themes, a small custom-theme studi
 - The plugin removes its backdrop, style element, and any active preview when unloaded or reloaded.
 - New installations keep the current Hermes theme and wallpaper off, and improve global range sliders. Existing settings are kept as-is across upgrades — every percent parameter spans the full 0-100 range and stored values are never rewritten.
 
-## Install
+## Install (recommended)
+
+```sh
+hermes plugins install CaptainMusX/hermes-skins/plugin --enable
+```
+
+Or use **Capabilities → Plugins → Install from Git**, enter `CaptainMusX/hermes-skins/plugin`, and install/enable both components. This prebuilt native package needs no npm build, manual copying, or custom installer. Reopen Hermes after first install and restart the gateway for scene support. Updates use `hermes plugins update hermes-skins`. Private repositories require access credentials.
+
+See [installation and migration](docs/INSTALL.md). The package is not yet listed in the public discovery catalog; the embedded wallpaper player needs further work to satisfy catalog desktop-script lint.
+
+## Development and offline fallback
 
 ```sh
 npm run build

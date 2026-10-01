@@ -3,10 +3,34 @@
 ## 准备
 
 - 安装 Hermes Desktop。当前实机验证版本为 **0.21.5+3337**；不同版本的 SDK 和界面结构可能需要重新验证。
-- 准备 Node.js **22 或以上**，可使用 Hermes 自带的 `node/node.exe`，或安装到系统 PATH。
+- 原生插件安装直接使用 Hermes 自带的运行时，无需先安装 npm 构建依赖。场景解包优先使用 Hermes 自带的 Node；如果宿主未附带，再准备 PATH 中的 Node.js 22+。
 - 此包面向 Windows。macOS/Linux 的本地路径和 Wallpaper Engine 库发现尚未适配验证；Android/iOS 与普通浏览器不能直接加载这个桌面插件。
 
-## 使用已构建的 ZIP
+## 推荐：一句命令或插件页安装
+
+在命令提示符、PowerShell 或终端执行：
+
+```sh
+hermes plugins install CaptainMusX/hermes-skins/plugin --enable
+```
+
+也可打开 **技能与工具 → 插件 → Git 安装**，输入：
+
+```text
+CaptainMusX/hermes-skins/plugin
+```
+
+安装桌面组件和后端，勾选安装后启用。安装包已经预构建，Hermes 会把前端和后端放到各自的标准目录，无需 clone、npm install、手工复制文件或运行自定义安装脚本。首次安装后重新打开 Hermes，并重启网关以加载场景接口。
+
+更新：`hermes plugins update hermes-skins`。
+
+已有手工安装的旧后端时，备份该插件目录后可使用同一安装命令加 `--force` 重新安装。仓库为私有时，目标设备需要可访问该仓库的 GitHub 凭据。
+
+当前插件尚未上架“发现”列表，直接通过“Git 安装”使用。公开目录还需要单独审核，当前内嵌壁纸播放器尚未满足目录的桌面脚本规则。
+
+## 离线备用：使用已构建的 ZIP
+
+此方式需要可执行安装脚本的 Node.js 22+。
 
 1. 解压 `hermes-skins-v1.3.4-windows.zip`，进入其中的 `hermes-skins-v1.3.4` 文件夹。
 2. 双击 `install.cmd`。也可在该文件夹打开终端，执行：
