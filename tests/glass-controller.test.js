@@ -114,8 +114,11 @@ test('endpoint levers stay honest in the generated stylesheet', () => {
     assert.ok(css.includes('--hermes-skins-composer-frost: none'))
     assert.ok(css.includes('--user-bubble-keep: 0% !important'))
     assert.ok(css.includes('rgba(128, 153, 179, 0)'))
+    assert.ok(css.includes('[data-glass-raised]'))
+    assert.ok(css.includes('[data-overlay-surface]'))
     glass.update({ enabled: true, glassTransparency: 0, surfaceFrost: 20 })
     assert.ok(glass.styleEl.textContent.includes('--hermes-skins-keep: 100%'))
+    assert.ok(glass.styleEl.textContent.includes('[data-glass-raised]'))
   } finally {
     f.restore()
   }

@@ -1173,6 +1173,7 @@ class GlassController {
     // Floating text sits over other text, so it retains a readable veil while
     // still revealing the wallpaper. It follows the main lever above 70% fill.
     const floatingKeep = Math.max(keep, 70)
+    const overlayKeep = Math.max(keep, 74)
     const bubbleKeep = pct(bubbleOpacity, 100)
     const composerBlur = Math.min(20, Math.max(0, pct(composerFrost, 10)))
     const surfaceBlur = Math.min(20, Math.max(0, pct(surfaceFrost, 8)))
@@ -1180,6 +1181,8 @@ class GlassController {
     // Frosted glass samples the wallpaper behind a surface; blur(0) would still
     // promote a composited layer, so the frost vars stay `none` when off.
     const frost = surfaceBlur > 0 ? `blur(${surfaceBlur}px)` : 'none'
+    const overlayFrost = surfaceBlur > 0 ? `blur(${Math.max(16, surfaceBlur * 2)}px) saturate(180%)` : 'none'
+    const overlayScrimFrost = surfaceBlur > 0 ? `blur(${Math.max(10, surfaceBlur)}px)` : 'none'
     const composerFrostCss = composerBlur > 0 ? `blur(${composerBlur}px)` : 'none'
 
     // Terminal: xterm resolves --ui-terminal-surface-background to a concrete
@@ -1213,7 +1216,11 @@ class GlassController {
         --hermes-skins-sidebar-tint: var(--hermes-skins-chrome-tint);
         --hermes-skins-editor-tint: var(--hermes-skins-chrome-tint);
         --hermes-skins-floating-tint: color-mix(in srgb, var(--ui-bg-chrome) ${floatingKeep}%, transparent);
+        --hermes-skins-overlay-tint: color-mix(in srgb, var(--ui-bg-chrome) ${overlayKeep}%, transparent);
+        --hermes-skins-overlay-sidebar-tint: color-mix(in srgb, var(--ui-bg-sidebar) ${Math.max(25, overlayKeep - 40)}%, transparent);
         --hermes-skins-frost: ${frost};
+        --hermes-skins-overlay-frost: ${overlayFrost};
+        --hermes-skins-overlay-scrim-frost: ${overlayScrimFrost};
         --hermes-skins-composer-frost: ${composerFrostCss};
         /* Bubble fill share. !important is required to outrank the host's own
            bubble-transparency lever, which publishes the same custom property
@@ -1408,6 +1415,48 @@ class GlassController {
       }
       :root[data-hermes-skins-active="true"] .tooltip-bubble [data-slot="tooltip-arrow"] {
         fill: var(--hermes-skins-floating-tint);
+      }
+      /* Overlay modal cards (Settings, Command Center, Profiles) and raised glass surfaces:
+         instead of opaque 94-100% white/black slabs, they join the frosted glass style
+         with clean text readability and wallpaper translucency. */
+      :root[data-hermes-skins-active="true"] [data-overlay-surface] {
+        background-color: color-mix(in srgb, #000 18%, transparent) !important;
+        backdrop-filter: blur(12px) !important;
+        -webkit-backdrop-filter: blur(12px) !important;
+      }
+      :root[data-hermes-skins-active="true"] [data-glass-raised] {
+        --ui-chat-surface-background: var(--hermes-skins-overlay-tint) !important;
+        --ui-sidebar-surface-background: var(--hermes-skins-overlay-sidebar-tint) !important;
+        --ui-editor-surface-background: var(--hermes-skins-overlay-tint) !important;
+        background-color: var(--hermes-skins-overlay-tint) !important;
+        backdrop-filter: blur(20px) saturate(180%) !important;
+        -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.2), 0 0 0 1px color-mix(in srgb, var(--dt-border) 40%, transparent) !important;
+      }
+      /* Left sidebar in overlay cards: single layer translucency to avoid double-darkening */
+      :root[data-hermes-skins-active="true"] [data-glass-raised] aside,
+      :root[data-hermes-skins-active="true"] [data-glass-raised] [class*="bg-(--ui-sidebar-surface-background)"] {
+        background-color: var(--hermes-skins-overlay-sidebar-tint) !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+        border-right: 1px solid color-mix(in srgb, var(--ui-stroke-secondary) 50%, transparent) !important;
+      }
+      :root[data-hermes-skins-active="true"] [data-glass-raised] main {
+        background-color: transparent !important;
+      }
+      /* Titlebar pill buttons (like Search) and opaque badges in overlays */
+      :root[data-hermes-skins-active="true"] [data-overlay-surface] [data-glass-opaque] {
+        background-color: color-mix(in srgb, var(--ui-bg-chrome) 60%, transparent) !important;
+        backdrop-filter: blur(8px) !important;
+        -webkit-backdrop-filter: blur(8px) !important;
+        border-color: color-mix(in srgb, var(--ui-stroke-secondary) 60%, transparent) !important;
+      }
+      /* Radix dialogs and floating dialog contents */
+      :root[data-hermes-skins-active="true"] [role="dialog"]:not([data-overlay-surface]),
+      :root[data-hermes-skins-active="true"] [data-slot="dialog-content"] {
+        background-color: var(--hermes-skins-overlay-tint) !important;
+        backdrop-filter: blur(20px) !important;
+        -webkit-backdrop-filter: blur(20px) !important;
       }
       /* Terminal surfaces resolve through --ui-terminal-surface-background: the
          fixed persistent host paints it inline and the xterm canvas paints the
