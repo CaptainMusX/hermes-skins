@@ -13,24 +13,34 @@ const i18nCode = fs.readFileSync(path.join(rootDir, 'src/i18n.js'), 'utf8')
 const catalogCode = fs.readFileSync(path.join(rootDir, 'src/catalog/builtin-skins.js'), 'utf8')
 const backdropCode = fs.readFileSync(path.join(rootDir, 'src/engine/backdrop-manager.js'), 'utf8')
 const glassCode = fs.readFileSync(path.join(rootDir, 'src/engine/glass-controller.js'), 'utf8')
+const rangeCode = fs.readFileSync(path.join(rootDir, 'src/engine/range-controller.js'), 'utf8')
+const configCode = fs.readFileSync(path.join(rootDir, 'src/engine/config.js'), 'utf8')
+const contrastCode = fs.readFileSync(path.join(rootDir, 'src/engine/color-contrast.js'), 'utf8')
 const storageCode = fs.readFileSync(path.join(rootDir, 'src/engine/storage-manager.js'), 'utf8')
+const controllerCode = fs.readFileSync(path.join(rootDir, 'src/engine/skin-controller.js'), 'utf8')
+const watcherCode = fs.readFileSync(path.join(rootDir, 'src/engine/theme-watcher.js'), 'utf8')
+const weLibraryCode = fs.readFileSync(path.join(rootDir, 'src/engine/we-library.js'), 'utf8')
+const sceneCode = fs.readFileSync(path.join(rootDir, 'src/engine/scene-player.js'), 'utf8')
+const webCode = fs.readFileSync(path.join(rootDir, 'src/engine/web-player.js'), 'utf8')
+const playerCode = fs.readFileSync(path.join(rootDir, 'third_party/dsh-skins/we-player-source.ts'), 'utf8')
+const shimCode = fs.readFileSync(path.join(rootDir, 'third_party/dsh-skins/we-shim-source.ts'), 'utf8')
 const tryOnBannerCode = fs.readFileSync(path.join(rootDir, 'src/ui/TryOnBanner.js'), 'utf8')
 const studioCode = fs.readFileSync(path.join(rootDir, 'src/ui/CustomThemeStudio.js'), 'utf8')
+const wePanelCode = fs.readFileSync(path.join(rootDir, 'src/ui/WallpaperEnginePanel.js'), 'utf8')
 const pageCode = fs.readFileSync(path.join(rootDir, 'src/ui/SkinCenterPage.js'), 'utf8')
-const chipCode = fs.readFileSync(path.join(rootDir, 'src/ui/StatusBarChip.js'), 'utf8')
 
 // Clean internal imports & exports from submodules
 function stripImportsAndExports(code) {
   return code
     .replace(/^import\s+[\s\S]*?from\s+['"][^'"]+['"];?/gm, '')
-    .replace(/^export\s+(const|class|function|let|var)\s+/gm, '$1 ')
+    .replace(/^export\s+(async\s+)?(const|class|function|let|var)\s+/gm, '$1$2 ')
     .replace(/^export\s+default\s+[\s\S]*?;?/gm, '')
     .trim()
 }
 
 const bundled = `/**
  * Hermes Skin Center (hermes-skins)
- * Version: 1.0.0
+ * Version: ${JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8')).version}
  * Author: CaptainMusX (inspired by dsh-skins)
  * 
  * Standalone Desktop Plugin for Hermes Desktop.
@@ -39,13 +49,12 @@ const bundled = `/**
  */
 
 import {
-  atom, Badge, Button, Codicon, haptic, host, Input,
-  PALETTE_AREA, Popover, PopoverContent, PopoverTrigger,
-  ROUTES_AREA, SegmentedControl, SIDEBAR_NAV_AREA,
-  STATUSBAR_AREAS, Switch, THEMES_AREA, Tip,
+  atom, Badge, Button, host, Input,
+  PALETTE_AREA, ROUTES_AREA, SegmentedControl, SIDEBAR_NAV_AREA,
+  Switch, THEMES_AREA,
   usePluginI18n, useTheme, useValue
 } from '@hermes/plugin-sdk'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 // ─── Submodule: i18n ──────────────────────────────────────────
@@ -60,8 +69,35 @@ ${stripImportsAndExports(backdropCode)}
 // ─── Submodule: Glass Controller ──────────────────────────────
 ${stripImportsAndExports(glassCode)}
 
+// ─── Submodule: Global Range Controller ──────────────────────
+${stripImportsAndExports(rangeCode)}
+
 // ─── Submodule: Storage ───────────────────────────────────────
+${stripImportsAndExports(configCode)}
+
+${stripImportsAndExports(contrastCode)}
+
 ${stripImportsAndExports(storageCode)}
+
+// ─── Submodule: Skin Controller ───────────────────────────────
+${stripImportsAndExports(controllerCode)}
+
+// ─── Submodule: Root-Theme Watcher ────────────────────────────
+${stripImportsAndExports(watcherCode)}
+
+// ─── Submodule: Wallpaper Engine Library ─────────────────────
+${stripImportsAndExports(weLibraryCode)}
+
+// ─── Third-party MIT WebGL player from dsh-skins ─────────────
+${stripImportsAndExports(playerCode)}
+
+${stripImportsAndExports(shimCode)}
+
+// ─── Scene Player Bridge ─────────────────────────────────────
+${stripImportsAndExports(sceneCode)}
+
+// ─── Sandboxed Web Wallpaper Bridge ──────────────────────────
+${stripImportsAndExports(webCode)}
 
 // ─── Submodule: Try-On Banner ─────────────────────────────────
 ${stripImportsAndExports(tryOnBannerCode)}
@@ -69,11 +105,11 @@ ${stripImportsAndExports(tryOnBannerCode)}
 // ─── Submodule: Custom Theme Studio ───────────────────────────
 ${stripImportsAndExports(studioCode)}
 
+// ─── Submodule: Wallpaper Engine Panel ───────────────────────
+${stripImportsAndExports(wePanelCode)}
+
 // ─── Submodule: Skin Center Page ──────────────────────────────
 ${stripImportsAndExports(pageCode)}
-
-// ─── Submodule: Status Bar Chip ───────────────────────────────
-${stripImportsAndExports(chipCode)}
 
 // ─── Plugin Registration Entry ────────────────────────────────
 const PLUGIN_ID = 'hermes-skins'
@@ -91,21 +127,20 @@ export default {
     const store = createSkinStore(ctx)
     const backdropManager = new BackdropManager()
     const glassController = new GlassController()
+    const rangeController = new RangeController()
+    rangeController.start()
+    const controller = new SkinController(store, BUILTIN_SKINS, backdropManager, glassController)
 
     // 3. Register themes to core THEMES_AREA
     for (const skin of BUILTIN_SKINS) {
       ctx.register({
         id: \`theme-\${skin.id}\`,
         area: THEMES_AREA,
-        data: {
-          name: skin.id,
-          label: skin.name,
-          description: skin.tagline || skin.description,
-          colors: skin.colors,
-          darkColors: skin.darkColors,
-          customCSS: skin.customCSS
-        }
+        data: toThemeContribution(skin)
       })
+    }
+    for (const skin of store.$config.get().customSkins) {
+      ctx.register({ id: \`theme-\${skin.id}\`, area: THEMES_AREA, data: toThemeContribution(skin) })
     }
 
     // 4. Register Full Page Route (/skins)
@@ -113,7 +148,8 @@ export default {
       id: 'page',
       area: ROUTES_AREA,
       data: { path: '/skins' },
-      render: () => jsx(SkinCenterPage, { store, backdropManager, glassController })
+      render: () => jsx(SkinCenterPage, { store, controller,
+        prepareScene: dir => ctx.rest('/scene/prepare', { method: 'POST', body: { dir } }) })
     })
 
     // 5. Register Sidebar Navigation Entry
@@ -128,13 +164,12 @@ export default {
       }
     })
 
-    // 6. Register Status Bar Chip
-    ctx.register({
-      id: 'status-chip',
-      area: STATUSBAR_AREAS.right,
-      order: 140,
-      render: () => jsx(StatusBarChip, { store, backdropManager, glassController })
-    })
+    // 6. Runtime theme watcher. The old status-bar chip carried this sync in a
+    //    React effect; the watcher runs independent of any page or status-bar
+    //    visibility, watches only the root theme attributes, and is disposed
+    //    with the plugin. The bottom bar keeps no skin entry at all — the skin
+    //    center page and the command palette remain the entries.
+    const disposeThemeWatcher = watchRootTheme(store, controller)
 
     // 7. Register Command Palette actions
     ctx.register({
@@ -156,22 +191,8 @@ export default {
         title: 'Skin Center: Toggle Wallpaper / 皮肤中心: 切换壁纸开关',
         keywords: ['skin', 'wallpaper', 'toggle', '壁纸'],
         run: () => {
-          const conf = store.$config.get()
-          const next = !conf.wallpaperEnabled
-          store.saveConfig({ wallpaperEnabled: next })
-          backdropManager.update({
-            enabled: next,
-            type: conf.wallpaperType,
-            src: conf.wallpaperSource,
-            blur: conf.wallpaperBlur,
-            occlusion: conf.maskOcclusion
-          })
-          glassController.update({
-            enabled: next,
-            glassTransparency: conf.panelGlass,
-            bubbleOpacity: conf.bubbleOpacity,
-            composerFrost: conf.composerFrost
-          })
+          const next = !store.$config.get().wallpaperEnabled
+          controller.changeConfig({ wallpaperEnabled: next })
           host.notify({
             kind: 'info',
             message: next ? 'Custom wallpaper enabled' : 'Custom wallpaper disabled'
@@ -180,35 +201,19 @@ export default {
       }
     })
 
-    // 8. Boot-time restoration (Anti-FOUC)
-    const initialConfig = store.$config.get()
-    if (initialConfig.activeSkinId && initialConfig.activeSkinId !== 'default') {
-      const activeSkin = BUILTIN_SKINS.find(s => s.id === initialConfig.activeSkinId)
-      if (activeSkin) {
-        backdropManager.update({
-          enabled: initialConfig.wallpaperEnabled,
-          type: initialConfig.wallpaperType,
-          src: initialConfig.wallpaperSource || activeSkin.wallpaper,
-          blur: initialConfig.wallpaperBlur,
-          occlusion: initialConfig.maskOcclusion,
-          isDark: true
-        })
-        glassController.update({
-          enabled: true,
-          glassTransparency: initialConfig.panelGlass,
-          bubbleOpacity: initialConfig.bubbleOpacity,
-          composerFrost: initialConfig.composerFrost,
-          customCSS: activeSkin.customCSS,
-          isDark: true
-        })
-      }
+    // Hermes owns the selected theme. A stored plugin selection never overrides it.
+    if (typeof document !== 'undefined') {
+      controller.sync(document.documentElement.dataset.hermesTheme || null,
+        document.documentElement.dataset.hermesMode || 'dark')
     }
 
-    // 9. Teardown on plugin reload / dispose
+    // 9. Teardown on plugin reload / dispose: backdrop DOM, runtime CSS, the
+    //    composer frost layer and the theme watcher all release together.
     if (typeof ctx.onDispose === 'function') {
       ctx.onDispose(() => {
-        backdropManager.destroy()
-        glassController.destroy()
+        disposeThemeWatcher()
+        rangeController.destroy()
+        controller.destroy()
       })
     }
   }
@@ -216,5 +221,6 @@ export default {
 `
 
 const outPath = path.join(rootDir, 'plugin.js')
-fs.writeFileSync(outPath, bundled, 'utf8')
-console.log(`[build] Successfully compiled standalone plugin to ${outPath} (${bundled.length} bytes)`)
+const cleanBundle = bundled.replace(/[ \t]+$/gm, '')
+fs.writeFileSync(outPath, cleanBundle, 'utf8')
+console.log(`[build] Successfully compiled standalone plugin to ${outPath} (${Buffer.byteLength(cleanBundle)} bytes)`)

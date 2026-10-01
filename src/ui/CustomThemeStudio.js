@@ -3,13 +3,13 @@
  * Allows users to craft their own palettes, pick wallpapers, and export/import skin JSON.
  */
 
-import { Button, Input, usePluginI18n, useValue } from '@hermes/plugin-sdk'
-import { useState } from 'react'
+import { Button, Input, usePluginI18n } from '@hermes/plugin-sdk'
+import { useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
+import { normalizeMediaSource } from '../engine/backdrop-manager.js'
 
-export function CustomThemeStudio({ store, onApplySkin, onTryOnSkin }) {
+export function CustomThemeStudio({ store, onApplySkin }) {
   const t = usePluginI18n('hermes-skins')
-  const config = useValue(store.$config)
 
   const [name, setName] = useState('')
   const [accent, setAccent] = useState('#6366f1')
@@ -17,9 +17,17 @@ export function CustomThemeStudio({ store, onApplySkin, onTryOnSkin }) {
   const [foreground, setForeground] = useState('#f8fafc')
   const [card, setCard] = useState('#111827')
   const [wallpaperUrl, setWallpaperUrl] = useState('')
+  const [importError, setImportError] = useState('')
+  const fileInputRef = useRef(null)
+  const validColor = value => /^#[0-9a-f]{6}$/i.test(value)
+  const valid = name.trim() && [accent, background, foreground, card].every(validColor) &&
+    (!wallpaperUrl || normalizeMediaSource(wallpaperUrl, 'image'))
+  const ink = parseInt(accent.slice(1, 3), 16) * 0.299 +
+    parseInt(accent.slice(3, 5), 16) * 0.587 + parseInt(accent.slice(5, 7), 16) * 0.114 > 150
+    ? '#111827' : '#ffffff'
 
   function handleSave() {
-    if (!name.trim()) return
+    if (!valid) return
 
     const customSkin = {
       id: `custom-${Date.now()}`,
@@ -44,11 +52,11 @@ export function CustomThemeStudio({ store, onApplySkin, onTryOnSkin }) {
         popover: card,
         popoverForeground: foreground,
         primary: accent,
-        primaryForeground: '#ffffff',
+        primaryForeground: ink,
         secondary: card,
         secondaryForeground: foreground,
         accent,
-        accentForeground: '#ffffff',
+        accentForeground: ink,
         border: '#1f2937',
         input: card,
         ring: accent,
@@ -64,11 +72,11 @@ export function CustomThemeStudio({ store, onApplySkin, onTryOnSkin }) {
         popover: card,
         popoverForeground: foreground,
         primary: accent,
-        primaryForeground: '#ffffff',
+        primaryForeground: ink,
         secondary: card,
         secondaryForeground: foreground,
         accent,
-        accentForeground: '#ffffff',
+        accentForeground: ink,
         border: '#1f2937',
         input: card,
         ring: accent,
@@ -76,11 +84,7 @@ export function CustomThemeStudio({ store, onApplySkin, onTryOnSkin }) {
       }
     }
 
-    store.saveConfig(prev => ({
-      ...prev,
-      customSkins: [customSkin, ...(prev.customSkins || [])]
-    }))
-
+    store.addCustomSkin(customSkin)
     onApplySkin(customSkin)
     setName('')
   }
@@ -103,6 +107,27 @@ export function CustomThemeStudio({ store, onApplySkin, onTryOnSkin }) {
     URL.revokeObjectURL(url)
   }
 
+  // Import fills the form only; saving still registers the skin explicitly.
+  function handleImportJson(file) {
+    file.text().then(text => {
+      const parsed = JSON.parse(text)
+      const colors = parsed.colors || {}
+      const color = value => {
+        if (typeof value !== 'string' || !validColor(value)) throw new Error('invalid color')
+        return value
+      }
+      const wallpaper = typeof parsed.wallpaper === 'string' ? parsed.wallpaper : ''
+      if (wallpaper && !normalizeMediaSource(wallpaper, 'image')) throw new Error('invalid wallpaper')
+      setName(typeof parsed.name === 'string' ? parsed.name : '')
+      setAccent(color(parsed.accent ?? colors.accent))
+      setBackground(color(colors.background))
+      setForeground(color(colors.foreground))
+      setCard(color(colors.card ?? colors.background))
+      setWallpaperUrl(wallpaper)
+      setImportError('')
+    }).catch(() => setImportError(t('skinJsonInvalid')))
+  }
+
   return jsxs('div', {
     className: 'flex flex-col gap-6 max-w-2xl',
     children: [
@@ -114,6 +139,7 @@ export function CustomThemeStudio({ store, onApplySkin, onTryOnSkin }) {
         ]
       }),
       jsxs('div', {
+        'data-hermes-skins-surface': '',
         className: 'grid grid-cols-1 md:grid-cols-2 gap-4 rounded-xl border border-border/60 bg-card/60 p-4 backdrop-blur-md',
         children: [
           jsxs('div', {
@@ -207,35 +233,36 @@ export function CustomThemeStudio({ store, onApplySkin, onTryOnSkin }) {
         ]
       }),
       jsxs('div', {
-        className: 'flex items-center justify-between',
+        className: 'flex items-center justify-between gap-3',
         children: [
-          jsx(Button, {
-            variant: 'outline',
-            onClick: handleExportJson,
-            children: t('exportSkinJson')
-          }),
           jsxs('div', {
             className: 'flex items-center gap-2',
             children: [
               jsx(Button, {
-                variant: 'secondary',
-                onClick: () => {
-                  onTryOnSkin({
-                    id: 'custom-preview',
-                    name: name || 'Preview',
-                    accent,
-                    wallpaper: wallpaperUrl,
-                    colors: { background, foreground, card, accent }
-                  })
-                },
-                children: t('tryOnButton')
+                variant: 'outline',
+                onClick: handleExportJson,
+                children: t('exportSkinJson')
               }),
               jsx(Button, {
-                onClick: handleSave,
-                disabled: !name.trim(),
-                children: t('saveCustomSkin')
-              })
+                variant: 'outline',
+                onClick: () => fileInputRef.current?.click(),
+                children: t('importSkinJson')
+              }),
+              jsx('input', {
+                ref: fileInputRef, type: 'file', accept: '.json,application/json', style: { display: 'none' },
+                onChange: event => {
+                  const file = event.target.files?.[0]
+                  if (file) handleImportJson(file)
+                  event.target.value = ''
+                }
+              }),
+              importError && jsx('span', { className: 'text-xs text-destructive', children: importError })
             ]
+          }),
+          jsx(Button, {
+            onClick: handleSave,
+            disabled: !valid,
+            children: t('saveCustomSkin')
           })
         ]
       })

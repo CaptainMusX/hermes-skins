@@ -1,0 +1,12 @@
+# Hermes Skins dashboard backend.
+#
+# This manifest exists so the Hermes PluginManager sees the plugin as a
+# first-class user plugin: `hermes plugins enable hermes-skins` then goes
+# through the official PM admission transaction (plugins_state / plugins_admission),
+# whose selection is owned and reconciled by the plugin system itself. The
+# dashboard API routes keep mounting through dashboard/manifest.json
+# independently — this file only makes the allow-list entry durable.
+name: hermes-skins
+version: 1.3.4
+description: Skin Center backend - Wallpaper Engine scene extraction for the Hermes Skins desktop plugin.
+kind: standalone

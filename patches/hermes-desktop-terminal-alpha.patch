@@ -1,0 +1,86 @@
+# hermes-desktop terminal alpha patch — hermes-skins plugin
+#
+# What it does
+# ------------
+# Flips the two xterm instances (interactive + agent terminal) to
+# allowTransparency: true and advertises the capability on <html> via
+# data-hermes-terminal-alpha="true". The hermes-skins plugin reads that
+# attribute on every sync: unpatched hosts keep the opaque terminal plate
+# (plugin default, no artifacts), patched hosts get a real translucent
+# terminal canvas over the wallpaper.
+#
+# Why it is needed
+# ----------------
+# xterm 6.0.0 with allowTransparency: false forces every glyph cell's
+# background opaque in the texture atlas (TextureAtlas._getBackgroundColor)
+# and the WebGL canvas alpha path is not a supported composite. Pure CSS
+# (transparent hosts, screen/multiply canvas blending) cannot produce a
+# correct see-through terminal; this patch is the supported route.
+#
+# Compatibility boundary
+# ----------------------
+# * PTY, scrollback, ANSI colors, selection, input, links, serialize replay:
+#   untouched — the change is renderer-level only.
+# * Glyph quality: xterm bakes glyphs as grayscale-alpha (the reason the host
+#   pinned it off; see the replaced comment in use-terminal-session.ts).
+# * minimumContrastRatio and the cursor resolve against the surface color; at
+#   panelGlass 100 (surface keep 0%) the cursor accent carries alpha and
+#   block-cursor text can lose contrast at that extreme.
+# * The host's own [data-hermes-glass] window mode pins the same var opaque;
+#   this patch only affects the plugin wallpaper path.
+#
+# Apply (from the hermes-agent repo root):
+#   git apply patches/hermes-desktop-terminal-alpha.patch
+# Rollback:
+#   git apply -R patches/hermes-desktop-terminal-alpha.patch
+# The plugin falls back to the opaque terminal automatically — no plugin
+# rebuild or config change required.
+
+diff --git a/u b/apps/desktop/src/app/right-sidebar/terminal/selection.ts
+--- a/apps/desktop/src/app/right-sidebar/terminal/selection.ts
++++ b/apps/desktop/src/app/right-sidebar/terminal/selection.ts
+@@ -4,6 +4,11 @@
+ import { isMacPlatform } from '@/lib/platform'
+ import type { DesktopTerminalPalette } from '@/themes/types'
+ 
++// hermes-skins terminal-alpha patch: advertise that xterm runs with
++// allowTransparency, so the plugin may resolve its terminal surface var
++// to a translucent color (patches/hermes-desktop-terminal-alpha.patch).
++if (typeof document !== 'undefined') document.documentElement.dataset.hermesTerminalAlpha = 'true'
++
+ // VS Code's default integrated-terminal palette (terminalColorRegistry.ts) — a
+ // fixed table per theme type, not luminance-derived. Light/dark diverge on
+ // purpose so each stays legible (e.g. mustard yellow on white).
+diff --git a/u b/apps/desktop/src/app/right-sidebar/terminal/use-agent-terminal.ts
+--- a/apps/desktop/src/app/right-sidebar/terminal/use-agent-terminal.ts
++++ b/apps/desktop/src/app/right-sidebar/terminal/use-agent-terminal.ts
+@@ -58,7 +58,8 @@
+ 
+     const term = new Terminal({
+       allowProposedApi: true,
+-      allowTransparency: false,
++      // hermes-skins terminal-alpha patch: see use-terminal-session.ts.
++      allowTransparency: true,
+       convertEol: true,
+       cursorBlink: false,
+       disableStdin: true,
+diff --git a/u b/apps/desktop/src/app/right-sidebar/terminal/use-terminal-session.ts
+--- a/apps/desktop/src/app/right-sidebar/terminal/use-terminal-session.ts
++++ b/apps/desktop/src/app/right-sidebar/terminal/use-terminal-session.ts
+@@ -512,11 +512,11 @@
+       // left/right escape per column of travel — shells that don't consume them
+       // echo the raw `^[[D` burst into the buffer. One gesture, one meaning.
+       altClickMovesCursor: false,
+-      // Opaque canvas = WebGL's crisp fast-path. allowTransparency instead bakes
+-      // glyphs as grayscale-alpha for compositing over a see-through canvas, which
+-      // reads soft on every platform; VS Code keeps it off and our surface
+-      // (--ui-bg-chrome) is opaque anyway, so withSurface paints it solid.
+-      allowTransparency: false,
++      // hermes-skins terminal-alpha patch: allowTransparency lets the WebGL
++      // canvas composite the plugin's translucent surface over the wallpaper.
++      // Glyph edges bake grayscale-alpha (slightly softer than the opaque
++      // fast-path) — accepted in exchange for true see-through terminals.
++      allowTransparency: true,
+       convertEol: true,
+       cursorBlink: true,
+       fontFamily: latestFontFamilyRef.current,

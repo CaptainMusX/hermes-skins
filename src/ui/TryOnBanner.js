@@ -28,7 +28,7 @@ export function TryOnBanner({ store, onApply, onExit }) {
             children: [
               jsx('div', {
                 className: 'text-sm font-semibold text-foreground',
-                children: t('tryOnBannerTitle', { name: skinName })
+                children: t('tryOnBannerTitle', skinName)
               }),
               jsx('div', {
                 className: 'text-xs text-muted-foreground',
