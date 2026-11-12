@@ -8,6 +8,8 @@ export class SkinController {
     this.lastTheme = null
     this.lastMode = 'dark'
     this.previewCleanup = null
+    this.pendingConfig = null
+    this.configFrame = null
     this.backdrop.onVisibilityChange = () => this.sync()
   }
 
@@ -52,6 +54,7 @@ export class SkinController {
   }
 
   tryOn(skin, theme) {
+    this.flushConfig()
     this.store.startTryOn(skin, theme.themeName)
     this.previewCleanup = theme.clearThemePreview
     theme.previewTheme(skin.id, theme.renderedMode)
@@ -66,6 +69,7 @@ export class SkinController {
   }
 
   apply(skin, theme) {
+    this.flushConfig()
     const previousTheme = this.findSkin(theme.themeName)
       ? this.store.$config.get().previousTheme
       : theme.themeName
@@ -87,6 +91,7 @@ export class SkinController {
   }
 
   restore(theme) {
+    this.flushConfig()
     const previous = this.store.$config.get().previousTheme
     const target = previous && !this.findSkin(previous) ? previous : 'nous'
     this.store.saveConfig(prev => ({ ...prev, activeSkinId: 'default', wallpaperEnabled: Boolean(prev.wallpaperSource) }))
@@ -98,11 +103,41 @@ export class SkinController {
   }
 
   changeConfig(change) {
+    this.flushConfig()
     this.store.saveConfig(change)
     this.sync()
   }
 
+  // Range input can arrive faster than the display. Apply only the newest
+  // values at the next paint; retain immediate commits for switches/imports.
+  scheduleConfig(change) {
+    this.pendingConfig = { ...this.pendingConfig, ...change }
+    if (this.configFrame !== null) return
+    this.configFrame = requestAnimationFrame(() => {
+      this.configFrame = null
+      const pending = this.pendingConfig
+      this.pendingConfig = null
+      if (pending) {
+        this.store.saveConfig(pending, { deferPersistence: true })
+        this.sync()
+      }
+    })
+  }
+
+  flushConfig() {
+    if (this.configFrame !== null) cancelAnimationFrame(this.configFrame)
+    this.configFrame = null
+    const pending = this.pendingConfig
+    this.pendingConfig = null
+    if (pending) {
+      this.store.saveConfig(pending)
+      this.sync()
+    }
+    this.store.flushPersistence?.()
+  }
+
   destroy() {
+    this.flushConfig()
     this.previewCleanup?.()
     this.previewCleanup = null
     this.backdrop.destroy()

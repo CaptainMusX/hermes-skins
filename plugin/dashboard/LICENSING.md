@@ -13,7 +13,7 @@ The original Hermes Skins code and original geometric SVG presets are licensed u
 | esbuild build output helpers | MIT notice from Evan Wallace is retained conservatively for emitted runtime boilerplate. The esbuild executable itself is not redistributed. |
 | hermes-skin-studio / Theme Forge | Design reference; its contributor notices and MIT license are included conservatively. No image or video assets from that repository are shipped. |
 
-Original third-party source files are preserved in `third_party/`. Generated JS bundles mechanically remove module imports/exports and transpile/concatenate the corresponding source; their headers identify these transformations. The adaptation modules under `src/engine/` and `scripts/scene-helper-entry.js` belong to this project.
+Third-party source files and their original copyright/license notices are retained in `third_party/`. Local modifications are identified in the accompanying NOTICE.md and THIRD-PARTY-NOTICES.md. Generated JS bundles remove module imports/exports and transpile/concatenate the corresponding source; their headers identify these transformations and the local adaptations. The adaptation modules under `src/engine/` and `scripts/scene-helper-entry.js` belong to this project.
 
 ## Upstream ambiguity and limits
 

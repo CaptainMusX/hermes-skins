@@ -66,3 +66,13 @@ test('auto-discovers an installed Steam library', async () => {
   assert.equal(result.items.filter(item => item.kind === 'video').length, 1)
   assert.equal(result.items.filter(item => item.kind === 'scene').length, 1)
 })
+
+test('ordinary projects reuse their inventory instead of rereading media directories', async () => {
+  const { bridge, video } = libraryFixture()
+  const originalRead = bridge.readDir
+  let directories = 0
+  bridge.readDir = async path => { directories++; return originalRead(path) }
+  const project = await readWallpaperProject(bridge, video)
+  assert.equal(project.mediaType, 'video')
+  assert.equal(directories, 1, 'project, video and preview share one inventory')
+})

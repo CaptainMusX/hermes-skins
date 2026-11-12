@@ -132,8 +132,8 @@ if (noEnable) {
 
 // Enable through the official plugin machinery. The CLI reads the current
 // selection and commits through the PM transaction, so the entry survives
-// host config rewrites; the raw config.yaml edit is only a fallback for
-// installs where the hermes CLI is unavailable.
+// host config rewrites. A raw enabled-list edit cannot clear an explicit
+// disabled entry or publish the PM admission receipt, so it is not a fallback.
 async function enableThroughRegistry(hermesHome) {
   const { spawnSync } = await import('node:child_process')
   const candidates = [
@@ -146,41 +146,24 @@ async function enableThroughRegistry(hermesHome) {
     let run
     try {
       run = spawnSync(cli, ['plugins', 'enable', 'hermes-skins'], {
-        encoding: 'utf8', timeout: 120000, windowsHide: true
+        encoding: 'utf8', timeout: 120000, windowsHide: true,
+        env: { ...process.env, HERMES_HOME: hermesHome }
       })
     } catch { continue }
     if (run.status === 0) {
       console.log(`[install] Plugin enabled through the official plugin registry (${cli}).`)
       return true
     }
+    if (run.error?.code === 'ENOENT') continue
+    // Do not retry through another authority or bypass a real refusal by
+    // editing YAML. Payload backups are already present for review/recovery.
+    const detail = String(run.stderr || run.stdout || run.error?.message || `exit ${run.status}`).trim().slice(-2000)
+    throw new Error(`Hermes refused to enable the scene backend (${cli}): ${detail}. Plugin files are installed; activation state was not bypassed.`)
   }
   return false
 }
 
-async function ensureAllowlistFallback(hermesHome) {
-  const configFile = path.join(hermesHome, 'config.yaml')
-  if (!fs.existsSync(configFile)) return
-  const original = fs.readFileSync(configFile, 'utf8')
-  if (/^    - hermes-skins\s*$/m.test(original)) return
-  if (!/^plugins:\s*\r?\n  enabled: \[\]\s*$/m.test(original)) {
-    throw new Error(`Plugin allow-list has an unfamiliar shape; backend files are ready, but ${configFile} was not changed`)
-  }
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-  const configBackup = `${configFile}.bak-hermes-skins-${stamp}`
-  fs.copyFileSync(configFile, configBackup, fs.constants.COPYFILE_EXCL)
-  const changed = original.replace(/(^plugins:\s*\r?\n  enabled: )\[\]/m, '$1\n    - hermes-skins')
-  const temp = `${configFile}.tmp-hermes-skins-${process.pid}`
-  try {
-    fs.writeFileSync(temp, changed, { flag: 'wx' })
-    fs.renameSync(temp, configFile)
-  } finally {
-    if (fs.existsSync(temp)) fs.unlinkSync(temp)
-  }
-  console.log(`[install] Plugin allow-list updated; original config backed up to: ${configBackup}`)
-}
-
 if (!(await enableThroughRegistry(hermesHome))) {
-  console.warn('[install] Official CLI enable unavailable; falling back to a direct config.yaml edit.')
-  await ensureAllowlistFallback(hermesHome)
+  throw new Error('Hermes CLI is unavailable. Plugin files are installed; enable hermes-skins in Hermes → Plugins, then restart Hermes to load scene API routes. No config.yaml edit was made.')
 }
 console.log('[install] Reload desktop plugins and restart the Hermes gateway to mount scene API routes.')

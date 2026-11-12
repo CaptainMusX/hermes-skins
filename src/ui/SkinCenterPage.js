@@ -29,7 +29,7 @@ export function SkinCenterPage({ store, controller, prepareScene }) {
   const customSourceValid = !sourceDraft || Boolean(normalizeMediaSource(sourceDraft, config.wallpaperType))
 
   useEffect(() => controller.sync(theme.themeName, theme.renderedMode),
-    [controller, theme.themeName, theme.renderedMode, config, preview])
+    [controller, theme.themeName, theme.renderedMode])
   useEffect(() => setSourceDraft(config.wallpaperSource), [config.wallpaperSource])
   useLayoutEffect(() => {
     const el = scrollRef.current
@@ -42,17 +42,23 @@ export function SkinCenterPage({ store, controller, prepareScene }) {
     if (el.scrollTop >= desired - 1) return undefined
     let cancelled = false
     let frames = 120
-    const cancel = () => { cancelled = true }
+    let frame = null
+    const cancel = () => {
+      cancelled = true
+      if (frame !== null) cancelAnimationFrame(frame)
+      el.removeEventListener('wheel', cancel)
+      el.removeEventListener('touchmove', cancel)
+    }
     el.addEventListener('wheel', cancel, { passive: true, once: true })
     el.addEventListener('touchmove', cancel, { passive: true, once: true })
     const tick = () => {
-      if (cancelled || !frames) return
+      if (cancelled || !frames) { cancel(); return }
       frames -= 1
-      if (el.scrollTop >= desired - 1) return
+      if (el.scrollTop >= desired - 1) { cancel(); return }
       el.scrollTop = desired
-      requestAnimationFrame(tick)
+      frame = requestAnimationFrame(tick)
     }
-    requestAnimationFrame(tick)
+    frame = requestAnimationFrame(tick)
     return cancel
   }, [tab])
 
@@ -76,7 +82,10 @@ export function SkinCenterPage({ store, controller, prepareScene }) {
         jsx('input', {
           type: 'range', min, max, step: 1, value: config[key],
           disabled: !(active || config.wallpaperSource) || Boolean(preview) || extraDisabled,
-          onChange: event => controller.changeConfig({ [key]: Number(event.target.value) }),
+          onChange: event => controller.scheduleConfig({ [key]: Number(event.target.value) }),
+          onPointerUp: () => controller.flushConfig(),
+          onKeyUp: () => controller.flushConfig(),
+          onBlur: () => controller.flushConfig(),
           className: 'w-full accent-primary'
         }),
         jsx('span', { className: 'text-[11px] text-muted-foreground', children: description })

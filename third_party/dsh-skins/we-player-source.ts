@@ -36,26 +36,53 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
   'use strict';
 
   const canvas = document.getElementById('canvas');
-  const gl = canvas.getContext('webgl', { alpha: true, depth: true, antialias: true, premultipliedAlpha: false }) ||
-             canvas.getContext('experimental-webgl', { alpha: true, depth: true });
+  const contextOptions = { alpha: true, depth: true, antialias: false, premultipliedAlpha: false, powerPreference: 'low-power' };
+  const gl = canvas.getContext('webgl', contextOptions) || canvas.getContext('experimental-webgl', contextOptions);
   if (!gl) return;
+  const uniformCache = new WeakMap(), attribCache = new WeakMap();
+  function cachedLocation(cache, program, name, lookup) {
+    let locations = cache.get(program);
+    if (!locations) { locations = new Map(); cache.set(program, locations); }
+    if (!locations.has(name)) locations.set(name, lookup.call(gl, resolveProgram(program), name));
+    return locations.get(name);
+  }
+  function uniformLocation(program, name) { return cachedLocation(uniformCache, program, name, gl.getUniformLocation); }
+  function attribLocation(program, name) { return cachedLocation(attribCache, program, name, gl.getAttribLocation); }
+
 
   let sceneData = null;
   let isPaused = false;
   let contextLost = false;
+  let disposed = false;
+  let frameSerial = 0;
   let fitMode = 'cover';
   let startTime = performance.now();
   let lastTime = performance.now();
+  let pausedAt = null;
   let textureCache = new Map();
+  let textureBytes = 0;
+  const textureBudget = 128 * 1024 * 1024;
   let videoTextureCache = new Map();
   let activeParticles = [];
   let mouseX = 0.5, mouseY = 0.5;
   let curRotX = 0, curRotY = 0;
+  // Real cursor mirrored by the host: the backdrop iframe never receives
+  // input (pointer-events none), so the embedding page forwards normalized
+  // pointer positions via dsh-set-cursor. cursorActive clears when the
+  // pointer leaves the window; it gates the cursorHide fade and the xray
+  // reveal (parallax reuses mouseX/mouseY). Cursor-driven GPU water-ripple
+  // simulation was intentionally removed for resource efficiency.
+  let cursorX = 0.5, cursorY = 0.5, cursorActive = false;
+
 
   window.addEventListener('mousemove', (e) => {
     mouseX = e.clientX / window.innerWidth;
     mouseY = e.clientY / window.innerHeight;
+    cursorX = mouseX;
+    cursorY = mouseY;
+    cursorActive = true;
   });
+  window.addEventListener('mouseleave', () => { cursorActive = false; });
 
   // 3D Shaders
   const vs3D = \`
@@ -428,6 +455,80 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
     }
   \`;
 
+  // Fragment shader for the WE xray effect (cursor reveal): the blend
+  // texture replaces the layer around the pointer with a soft radial
+  // falloff, gated by the blend alpha and the multiply constant. The
+  // author's sprite asset is approximated analytically; u_cursorOn freezes
+  // the reveal while the pointer is outside the window.
+  const fsXray = [
+    'precision mediump float;',
+    'varying vec2 v_uv;',
+    'uniform sampler2D u_tex;',
+    'uniform sampler2D u_blend;',
+    'uniform float u_alpha;',
+    'uniform vec2 u_cursorUV;',
+    'uniform vec2 u_xrayAspect;',
+    'uniform float u_pointerScale;',
+    'uniform float u_multiply;',
+    'uniform float u_cursorOn;',
+    'void main() {',
+    '  vec4 base = texture2D(u_tex, v_uv);',
+    '  vec4 blendTex = texture2D(u_blend, v_uv);',
+    '  float d = distance((v_uv - u_cursorUV) * u_xrayAspect, vec2(0.0));',
+    '  float r = d * u_pointerScale;',
+    '  float f = exp(-r * r * 3.0) * u_cursorOn;',
+    '  float blend = clamp(blendTex.a * u_multiply, 0.0, 1.0) * f;',
+    '  vec3 rgb = mix(base.rgb, blendTex.rgb, blend);',
+    '  float a = mix(base.a, blendTex.a, blend) * u_alpha;',
+    '  gl_FragColor = vec4(rgb, a);',
+    '}',
+  ].join('\\n');
+
+  // Fragment shader for WE shake effect (eye blinking, breathing)
+  const fsShake = [
+    'precision mediump float;',
+    'varying vec2 v_uv;',
+    'uniform sampler2D u_tex;',
+    'uniform sampler2D u_flow;',
+    'uniform sampler2D u_mask;',
+    'uniform int u_hasMask;',
+    'uniform float u_time;',
+    'uniform float u_speed;',
+    'uniform float u_strength;',
+    'uniform vec2 u_friction;',
+    'uniform vec2 u_bounds;',
+    'uniform int u_direction;',
+    'uniform float u_alpha;',
+    'uniform float u_bright;',
+    'uniform float u_power;',
+    'const float M_PI_2 = 6.283185307179586;',
+    'void main() {',
+    '  vec2 flowColors = texture2D(u_flow, v_uv).rg;',
+    '  vec2 flowMask = (flowColors.rg - vec2(0.498, 0.498)) * 2.0;',
+    '  float time = u_speed * u_time;',
+    '  float offset = sin(mod(time, M_PI_2));',
+    '  offset = offset * 0.498 + 0.5;',
+    '  float base = step(0.0, cos(time));',
+    '  offset = mix(1.0 - pow(max(0.0, 1.0 - offset), u_friction.x), pow(max(0.0, offset), u_friction.y), base);',
+    '  offset = clamp((offset - u_bounds.x) * (1.0 / max(0.0001, u_bounds.y - u_bounds.x)), 0.0, 1.0);',
+    '  if (u_direction == 0) {',
+    '    offset = offset * 2.0 - 1.0;',
+    '  } else if (u_direction == 2) {',
+    '    offset = offset - 1.0;',
+    '  }',
+    '  vec2 texCoordOffset = offset * u_strength * u_strength * flowMask;',
+    '  vec4 color = texture2D(u_tex, v_uv + texCoordOffset);',
+    '  if (u_hasMask > 0) {',
+    '    float maskVal = texture2D(u_mask, v_uv + texCoordOffset).r;',
+    '    vec4 orig = texture2D(u_tex, v_uv);',
+    '    color = mix(orig, color, maskVal);',
+    '  }',
+    '  color.rgb = pow(color.rgb * u_bright, vec3(u_power));',
+    '  color.a *= u_alpha;',
+    '  gl_FragColor = color;',
+    '}',
+  ].join('\\n');
+
   // Fragment shader for water reflection
   const fsReflection = \`
     precision mediump float;
@@ -443,6 +544,7 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
     uniform float u_waterLine;
     // Reflection sample window: start + puddleDepth * span (legacy 0.42/0.38).
     uniform vec2 u_reflectRange;
+
     void main() {
       float mask = texture2D(u_mask, v_uv).r;
       vec2 sceneUv = u_rect.xy + v_uv * u_rect.zw;
@@ -456,6 +558,7 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
                    cos(v_uv.x * 90.0 + u_time * 1.9) * 0.0015;
       uvReflect.x += wave * mask;
       uvReflect.y += wave * mask;
+
       vec4 reflected = texture2D(u_fbo, clamp(uvReflect, 0.0, 1.0));
       reflected.rgb *= vec3(0.70, 0.75, 0.90);
       gl_FragColor = vec4(reflected.rgb, mask * u_alpha * 0.28);
@@ -565,22 +668,38 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
     return s;
   }
 
+  const shaderCache = new Map();
+  function sharedShader(type, src) {
+    const key = type + ':' + src;
+    if (!shaderCache.has(key)) shaderCache.set(key, createShader(type, src));
+    return shaderCache.get(key);
+  }
+  // Many wallpapers use only one or two of the eleven shader programs.
+  // Compile only the programs actually requested by a draw/location lookup.
   function createProgram(vsSrc, fsSrc) {
+    return { vsSrc, fsSrc, program: null };
+  }
+  function resolveProgram(record) {
+    if (record.program) return record.program;
     const p = gl.createProgram();
-    gl.attachShader(p, createShader(gl.VERTEX_SHADER, vsSrc));
-    gl.attachShader(p, createShader(gl.FRAGMENT_SHADER, fsSrc));
+    gl.attachShader(p, sharedShader(gl.VERTEX_SHADER, record.vsSrc));
+    gl.attachShader(p, sharedShader(gl.FRAGMENT_SHADER, record.fsSrc));
     gl.linkProgram(p);
     if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
       console.error('we-scene-player program link failed:', gl.getProgramInfoLog(p));
     }
+    record.program = p;
     return p;
   }
+  function useProgram(record) { gl.useProgram(resolveProgram(record)); }
 
   const progBasic = createProgram(vsBasic, fsBasic);
   const progReflection = createProgram(vsBasic, fsReflection);
   const progParticle = createProgram(vsBasic, fsParticle);
   const progFlow = createProgram(vsBasic, fsFlow);
   const progFlag = createProgram(vsBasic, fsFlag);
+  const progXray = createProgram(vsBasic, fsXray);
+  const progShake = createProgram(vsBasic, fsShake);
   const prog3D = createProgram(vs3D, fs3D);
 
   // Camera-facing 3D billboard (sun sprites, 3D particle streaks). The quad is
@@ -711,21 +830,21 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
   function drawNeonGrid(model, mesh, proj, view, elapsed) {
     const uc = mesh.userColors || {};
     const un = mesh.userNums || {};
-    gl.useProgram(progNeonGrid);
-    gl.uniformMatrix4fv(gl.getUniformLocation(progNeonGrid, 'u_proj'), false, proj);
-    gl.uniformMatrix4fv(gl.getUniformLocation(progNeonGrid, 'u_view'), false, view);
-    gl.uniformMatrix4fv(gl.getUniformLocation(progNeonGrid, 'u_model'), false, mat4Transform3D(model.origin, model.angles, model.scale));
-    gl.uniform1f(gl.getUniformLocation(progNeonGrid, 'u_time'), elapsed);
-    gl.uniform1f(gl.getUniformLocation(progNeonGrid, 'u_mountainScale'), un.mountainscale != null ? un.mountainscale : 1);
+    useProgram(progNeonGrid);
+    gl.uniformMatrix4fv(uniformLocation(progNeonGrid, 'u_proj'), false, proj);
+    gl.uniformMatrix4fv(uniformLocation(progNeonGrid, 'u_view'), false, view);
+    gl.uniformMatrix4fv(uniformLocation(progNeonGrid, 'u_model'), false, mat4Transform3D(model.origin, model.angles, model.scale));
+    gl.uniform1f(uniformLocation(progNeonGrid, 'u_time'), elapsed);
+    gl.uniform1f(uniformLocation(progNeonGrid, 'u_mountainScale'), un.mountainscale != null ? un.mountainscale : 1);
     const near = uc.gridnear || [1, 0, 0.2];
     const far = uc.gridfar || [0, 0, 1];
     const bgc = uc.gridbackground || [0.1, 0, 0.1];
-    gl.uniform3f(gl.getUniformLocation(progNeonGrid, 'u_gridNear'), near[0], near[1], near[2]);
-    gl.uniform3f(gl.getUniformLocation(progNeonGrid, 'u_gridFar'), far[0], far[1], far[2]);
-    gl.uniform3f(gl.getUniformLocation(progNeonGrid, 'u_gridBg'), bgc[0], bgc[1], bgc[2]);
+    gl.uniform3f(uniformLocation(progNeonGrid, 'u_gridNear'), near[0], near[1], near[2]);
+    gl.uniform3f(uniformLocation(progNeonGrid, 'u_gridFar'), far[0], far[1], far[2]);
+    gl.uniform3f(uniformLocation(progNeonGrid, 'u_gridBg'), bgc[0], bgc[1], bgc[2]);
     const gpu = getGpuMesh(mesh);
-    const gPos = gl.getAttribLocation(progNeonGrid, 'a_pos');
-    const gUv = gl.getAttribLocation(progNeonGrid, 'a_uv');
+    const gPos = attribLocation(progNeonGrid, 'a_pos');
+    const gUv = attribLocation(progNeonGrid, 'a_uv');
     gl.enableVertexAttribArray(gPos);
     gl.enableVertexAttribArray(gUv);
     gl.bindBuffer(gl.ARRAY_BUFFER, gpu.posBuf);
@@ -776,33 +895,33 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
   const progCloudsBg = createProgram(vsCloudsBg, fsCloudsBg);
 
   function drawCloudsBgLayer(layer, elapsed, width, height) {
-    gl.useProgram(progCloudsBg);
+    useProgram(progCloudsBg);
     gl.bindBuffer(gl.ARRAY_BUFFER, spriteBuf);
-    const cPos = gl.getAttribLocation(progCloudsBg, 'a_corner');
-    const cUv = gl.getAttribLocation(progCloudsBg, 'a_uv');
+    const cPos = attribLocation(progCloudsBg, 'a_corner');
+    const cUv = attribLocation(progCloudsBg, 'a_uv');
     gl.enableVertexAttribArray(cPos);
     gl.enableVertexAttribArray(cUv);
     gl.vertexAttribPointer(cPos, 2, gl.FLOAT, false, 16, 0);
     gl.vertexAttribPointer(cUv, 2, gl.FLOAT, false, 16, 8);
-    gl.uniform1f(gl.getUniformLocation(progCloudsBg, 'u_time'), elapsed);
-    gl.uniform1f(gl.getUniformLocation(progCloudsBg, 'u_aspect'), width / Math.max(height, 1));
+    gl.uniform1f(uniformLocation(progCloudsBg, 'u_time'), elapsed);
+    gl.uniform1f(uniformLocation(progCloudsBg, 'u_aspect'), width / Math.max(height, 1));
     const uc = layer.userColors || {};
     const c1 = uc.clouds || [0.05, 0.15, 0.4];
     const ch = uc.horizon || [0.05, 0.15, 0.4];
-    gl.uniform3f(gl.getUniformLocation(progCloudsBg, 'u_color1'), c1[0], c1[1], c1[2]);
-    gl.uniform3f(gl.getUniformLocation(progCloudsBg, 'u_colorHorizon'), ch[0], ch[1], ch[2]);
+    gl.uniform3f(uniformLocation(progCloudsBg, 'u_color1'), c1[0], c1[1], c1[2]);
+    gl.uniform3f(uniformLocation(progCloudsBg, 'u_colorHorizon'), ch[0], ch[1], ch[2]);
     if (layer.texUrl) {
       const texRec = loadTexture(layer.texUrl, true);
       if (texRec.loaded) {
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, texRec.texture);
-        gl.uniform1i(gl.getUniformLocation(progCloudsBg, 'u_tex'), 0);
-        gl.uniform1i(gl.getUniformLocation(progCloudsBg, 'u_hasTex'), 1);
+        gl.uniform1i(uniformLocation(progCloudsBg, 'u_tex'), 0);
+        gl.uniform1i(uniformLocation(progCloudsBg, 'u_hasTex'), 1);
       } else {
-        gl.uniform1i(gl.getUniformLocation(progCloudsBg, 'u_hasTex'), 0);
+        gl.uniform1i(uniformLocation(progCloudsBg, 'u_hasTex'), 0);
       }
     } else {
-      gl.uniform1i(gl.getUniformLocation(progCloudsBg, 'u_hasTex'), 0);
+      gl.uniform1i(uniformLocation(progCloudsBg, 'u_hasTex'), 0);
     }
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
@@ -816,32 +935,32 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
   ]), gl.STATIC_DRAW);
 
   function drawBillboard(center, axisX, axisY, texUrl, color, proj, view) {
-    gl.useProgram(progSprite);
-    gl.uniformMatrix4fv(gl.getUniformLocation(progSprite, 'u_proj'), false, proj);
-    gl.uniformMatrix4fv(gl.getUniformLocation(progSprite, 'u_view'), false, view);
+    useProgram(progSprite);
+    gl.uniformMatrix4fv(uniformLocation(progSprite, 'u_proj'), false, proj);
+    gl.uniformMatrix4fv(uniformLocation(progSprite, 'u_view'), false, view);
     gl.bindBuffer(gl.ARRAY_BUFFER, spriteBuf);
-    const cPos = gl.getAttribLocation(progSprite, 'a_corner');
-    const cUv = gl.getAttribLocation(progSprite, 'a_uv');
+    const cPos = attribLocation(progSprite, 'a_corner');
+    const cUv = attribLocation(progSprite, 'a_uv');
     gl.enableVertexAttribArray(cPos);
     gl.enableVertexAttribArray(cUv);
     gl.vertexAttribPointer(cPos, 2, gl.FLOAT, false, 16, 0);
     gl.vertexAttribPointer(cUv, 2, gl.FLOAT, false, 16, 8);
-    gl.uniform3f(gl.getUniformLocation(progSprite, 'u_center'), center[0], center[1], center[2]);
-    gl.uniform2f(gl.getUniformLocation(progSprite, 'u_axisX'), axisX[0], axisX[1]);
-    gl.uniform2f(gl.getUniformLocation(progSprite, 'u_axisY'), axisY[0], axisY[1]);
-    gl.uniform4f(gl.getUniformLocation(progSprite, 'u_color'), color[0], color[1], color[2], color[3]);
+    gl.uniform3f(uniformLocation(progSprite, 'u_center'), center[0], center[1], center[2]);
+    gl.uniform2f(uniformLocation(progSprite, 'u_axisX'), axisX[0], axisX[1]);
+    gl.uniform2f(uniformLocation(progSprite, 'u_axisY'), axisY[0], axisY[1]);
+    gl.uniform4f(uniformLocation(progSprite, 'u_color'), color[0], color[1], color[2], color[3]);
     if (texUrl) {
       const texRec = loadTexture(texUrl);
       if (texRec.loaded) {
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, texRec.texture);
-        gl.uniform1i(gl.getUniformLocation(progSprite, 'u_tex'), 0);
-        gl.uniform1i(gl.getUniformLocation(progSprite, 'u_hasTex'), 1);
+        gl.uniform1i(uniformLocation(progSprite, 'u_tex'), 0);
+        gl.uniform1i(uniformLocation(progSprite, 'u_hasTex'), 1);
       } else {
-        gl.uniform1i(gl.getUniformLocation(progSprite, 'u_hasTex'), 0);
+        gl.uniform1i(uniformLocation(progSprite, 'u_hasTex'), 0);
       }
     } else {
-      gl.uniform1i(gl.getUniformLocation(progSprite, 'u_hasTex'), 0);
+      gl.uniform1i(uniformLocation(progSprite, 'u_hasTex'), 0);
     }
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
@@ -854,8 +973,11 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
   }
   function updateParticles3d(sys, dt) {
     const st = getParticles3d(sys);
-    st.acc += sys.rate * dt;
-    while (st.acc >= 1 && st.list.length < sys.maxCount) {
+    const maxCount = Math.min(256, Math.max(0, Number(sys.maxCount) || 0));
+    const rate = Math.min(256, Math.max(0, Number(sys.rate) || 0));
+    // Do not accumulate missed spawns while full and release them in a burst.
+    st.acc = Math.min(maxCount, st.acc + rate * dt);
+    while (st.acc >= 1 && st.list.length < maxCount) {
       st.acc -= 1;
       // Random point on a sphere shell around the emitter origin.
       const th = Math.random() * Math.PI * 2;
@@ -906,9 +1028,23 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.onload = () => {
+      if (disposed || contextLost) return;
+      // Bound decoded image residency as well as the canvas. A 4K multi-layer
+      // scene can otherwise allocate hundreds of MiB of GPU textures.
+      const maxSize = Math.min(Number(gl.getParameter(gl.MAX_TEXTURE_SIZE)) || 4096, 4096);
+      const scale = Math.min(1, maxSize / Math.max(img.width, img.height), Math.sqrt(4 * 1024 * 1024 / (img.width * img.height)));
+      const w = Math.max(1, Math.round(img.width * scale)), h = Math.max(1, Math.round(img.height * scale));
+      const bytes = w * h * 4;
+      if (textureBytes + bytes > textureBudget) { stopWithError(new Error('Scene image textures exceed 128 MiB')); return; }
+      let source = img;
+      if (scale < 1) {
+        source = document.createElement('canvas');
+        source.width = w; source.height = h;
+        source.getContext('2d').drawImage(img, 0, 0, w, h);
+      }
       gl.bindTexture(gl.TEXTURE_2D, tex);
       gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
       const wrap = repeat ? gl.REPEAT : gl.CLAMP_TO_EDGE;
@@ -917,6 +1053,7 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
       record.loaded = true;
       record.width = img.width;
       record.height = img.height;
+      textureBytes += bytes;
     };
     img.src = url;
     return record;
@@ -953,20 +1090,47 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
       video.muted = true;
       video.playsInline = true;
       video.preload = 'auto';
-      record = { texture, video, loaded: false };
+      record = { texture, video, loaded: false, enabled: false };
       video.addEventListener('loadeddata', () => { record.loaded = true; });
       videoTextureCache.set(layer.videoUrl, record);
+      if (typeof video.requestVideoFrameCallback === 'function') {
+        record.decodedFrame = 0;
+        const onFrame = (now, metadata) => {
+          record.videoFrameId = null;
+          if (disposed || contextLost) return;
+          record.decodedFrame = metadata.presentedFrames;
+          record.videoFrameId = video.requestVideoFrameCallback(onFrame);
+        };
+        record.videoFrameId = video.requestVideoFrameCallback(onFrame);
+      }
     }
-    if (enabled && !isPaused) { void record.video.play().catch(() => {}); }
-    else record.video.pause();
-    if (enabled && record.loaded && record.video.readyState >= 2) {
+    if (record.enabled !== enabled) {
+      record.enabled = enabled;
+      if (enabled && !isPaused) { void record.video.play().catch(() => {}); }
+      else record.video.pause();
+    }
+    // Shared video layers/passes upload each decoded frame only once.
+    const decodedFrame = record.decodedFrame ?? record.video.currentTime;
+    if (enabled && record.loaded && record.video.readyState >= 2 && record.uploadFrame !== frameSerial && record.uploadTime !== decodedFrame) {
       gl.bindTexture(gl.TEXTURE_2D, record.texture);
       gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, record.video);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      const width = record.video.videoWidth, height = record.video.videoHeight;
+      if (!record.bytes || record.width !== width || record.height !== height) {
+        const bytes = (width || 1) * (height || 1) * 4;
+        if (textureBytes - (record.bytes || 0) + bytes > textureBudget) throw new Error('Scene textures exceed 128 MiB');
+        textureBytes += bytes - (record.bytes || 0);
+        record.bytes = bytes;
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, record.video);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        record.width = width; record.height = height;
+      } else {
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, record.video);
+      }
+      record.uploadTime = decodedFrame;
+      record.uploadFrame = frameSerial;
     }
     return record;
   }
@@ -1078,7 +1242,7 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
   const modelGpuCache = new Map();
   function getGpuMesh(mesh) {
     if (modelGpuCache.has(mesh)) return modelGpuCache.get(mesh);
-    
+
     function b64ToF32(b64) {
       const bin = atob(b64);
       const bytes = new Uint8Array(bin.length);
@@ -1142,7 +1306,7 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
     const lifeMin = system.lifeMin || 3;
     const lifeMax = system.lifeMax || 5;
     const lifetime = lifeMin + Math.random() * (lifeMax - lifeMin);
-    
+
     // Position
     let x = 0, y = 0, vx = 0, vy = 0;
     if (system.type === 'meteor') {
@@ -1157,7 +1321,7 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
       vx = (Math.random() - 0.5) * 25;
       vy = 10 + Math.random() * 20;
     }
-    
+
     const size = system.size || (15 + Math.random() * 20);
     activeParticles.push({
       system,
@@ -1216,11 +1380,12 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
     reflW = w; reflH = h;
   }
 
+  // Draws exactly one frame. The loop itself is owned by render(): an early
+  // version scheduled the next frame here AND in render(), which doubled the
+  // rAF chain every frame (2^n callbacks) and saturated the GPU.
   function renderFrame(now) {
-    if (!sceneData) {
-      requestAnimationFrame(render);
-      return;
-    }
+    if (!sceneData) return;
+    frameSerial += 1;
 
     const dt = Math.min((now - lastTime) / 1000, 0.1);
     lastTime = now;
@@ -1241,8 +1406,14 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
     // canvas is upscaled by the compositor and the wallpaper looks soft
     // (capped at 2x to bound GPU cost on very high DPR screens).
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const width = Math.max(1, Math.round(window.innerWidth * dpr));
-    const height = Math.max(1, Math.round(window.innerHeight * dpr));
+    let width = Math.max(1, Math.round(window.innerWidth * dpr));
+    let height = Math.max(1, Math.round(window.innerHeight * dpr));
+    const maxDim = 2560;
+    if (width > maxDim || height > maxDim) {
+      const s = maxDim / Math.max(width, height);
+      width = Math.max(1, Math.round(width * s));
+      height = Math.max(1, Math.round(height * s));
+    }
     if (canvas.width !== width || canvas.height !== height) {
       canvas.width = width;
       canvas.height = height;
@@ -1320,14 +1491,14 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
       // (Re-)bind prog3D with all scene uniforms. Must be re-invoked after any
       // pass that switches to another program (bgLayers, billboards).
       function bindProg3D(viewOverride) {
-        gl.useProgram(prog3D);
-        gl.uniformMatrix4fv(gl.getUniformLocation(prog3D, 'u_proj'), false, proj3D);
-        gl.uniformMatrix4fv(gl.getUniformLocation(prog3D, 'u_view'), false, viewOverride || view3D);
-        gl.uniform3f(gl.getUniformLocation(prog3D, 'u_cameraPos'), eye[0], eye[1], eye[2]);
-        gl.uniform1f(gl.getUniformLocation(prog3D, 'u_time'), elapsed);
+        useProgram(prog3D);
+        gl.uniformMatrix4fv(uniformLocation(prog3D, 'u_proj'), false, proj3D);
+        gl.uniformMatrix4fv(uniformLocation(prog3D, 'u_view'), false, viewOverride || view3D);
+        gl.uniform3f(uniformLocation(prog3D, 'u_cameraPos'), eye[0], eye[1], eye[2]);
+        gl.uniform1f(uniformLocation(prog3D, 'u_time'), elapsed);
         // WE-standard scene shading for generic scenes; car scenes keep their
         // dedicated paint/grid pipeline.
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_sceneStd'), isCarScene ? 0 : 1);
+        gl.uniform1i(uniformLocation(prog3D, 'u_sceneStd'), isCarScene ? 0 : 1);
         // Engine-glow boost positions: origins of jet models (ricepod.vert).
         const jetPos = [];
         for (const model of sceneData.models) {
@@ -1335,35 +1506,35 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
           const jetLike = mName.includes('jet') || (model.meshes || []).some((mm) => (mm.shader || '').toLowerCase().includes('jet'));
           if (jetLike && jetPos.length < 4) jetPos.push(model.origin || [0, 0, 0]);
         }
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_jetCount'), jetPos.length);
+        gl.uniform1i(uniformLocation(prog3D, 'u_jetCount'), jetPos.length);
         for (let ji = 0; ji < 4; ji++) {
           const jp = jetPos[ji] || [0, 0, 0];
-          gl.uniform3f(gl.getUniformLocation(prog3D, 'u_jetPos[' + ji + ']'), jp[0], jp[1], jp[2]);
+          gl.uniform3f(uniformLocation(prog3D, 'u_jetPos[' + ji + ']'), jp[0], jp[1], jp[2]);
         }
         const pointLights = sceneData.pointLights || [];
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_lightCount'), pointLights.length);
+        gl.uniform1i(uniformLocation(prog3D, 'u_lightCount'), pointLights.length);
         for (let li = 0; li < 4; li++) {
           const light = pointLights[li] || { origin: [0, 0, 0], color: [0, 0, 0], radius: 1 };
-          gl.uniform3f(gl.getUniformLocation(prog3D, 'u_lightPos[' + li + ']'), light.origin[0], light.origin[1], light.origin[2]);
-          gl.uniform4f(gl.getUniformLocation(prog3D, 'u_lightColorRadius[' + li + ']'), light.color[0], light.color[1], light.color[2], light.radius);
+          gl.uniform3f(uniformLocation(prog3D, 'u_lightPos[' + li + ']'), light.origin[0], light.origin[1], light.origin[2]);
+          gl.uniform4f(uniformLocation(prog3D, 'u_lightColorRadius[' + li + ']'), light.color[0], light.color[1], light.color[2], light.radius);
         }
         const sky = sceneData.skyLightColor || [0, 0, 0];
-        gl.uniform3f(gl.getUniformLocation(prog3D, 'u_skyLightColor'), sky[0], sky[1], sky[2]);
+        gl.uniform3f(uniformLocation(prog3D, 'u_skyLightColor'), sky[0], sky[1], sky[2]);
         // Ricepod uses lightDir (-0.577, 0.577, 0.577), car uses (0.577, 0.577, 0.577)
-        gl.uniform3f(gl.getUniformLocation(prog3D, 'u_lightDir'), isCarScene ? 0.577 : -0.577, 0.577, 0.577);
+        gl.uniform3f(uniformLocation(prog3D, 'u_lightDir'), isCarScene ? 0.577 : -0.577, 0.577, 0.577);
         const amb = sceneData.clearColor || [0.1, 0.1, 0.15];
         // Generic scenes must preserve authored black ambient. Artificially
         // lifting it illuminated distant geometry that WE intentionally hides.
         const ambColor = isCarScene ? amb : (sceneData.ambientColor || [0, 0, 0]);
-        gl.uniform3f(gl.getUniformLocation(prog3D, 'u_ambientColor'), ambColor[0], ambColor[1], ambColor[2]);
-        gl.uniform3f(gl.getUniformLocation(prog3D, 'u_paintColor'), bodyCol[0], bodyCol[1], bodyCol[2]);
+        gl.uniform3f(uniformLocation(prog3D, 'u_ambientColor'), ambColor[0], ambColor[1], ambColor[2]);
+        gl.uniform3f(uniformLocation(prog3D, 'u_paintColor'), bodyCol[0], bodyCol[1], bodyCol[2]);
       }
       bindProg3D();
 
-      const locPos = gl.getAttribLocation(prog3D, 'a_pos');
-      const locNorm = gl.getAttribLocation(prog3D, 'a_norm');
-      const locUv = gl.getAttribLocation(prog3D, 'a_uv');
-      const locUv2 = gl.getAttribLocation(prog3D, 'a_uv2');
+      const locPos = attribLocation(prog3D, 'a_pos');
+      const locNorm = attribLocation(prog3D, 'a_norm');
+      const locUv = attribLocation(prog3D, 'a_uv');
+      const locUv2 = attribLocation(prog3D, 'a_uv2');
       gl.enableVertexAttribArray(locPos);
       gl.enableVertexAttribArray(locNorm);
       gl.enableVertexAttribArray(locUv);
@@ -1420,9 +1591,9 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
         if (flags.skybox || flags.followEye) {
           modelMat = mat4Transform3D([eye[0], eye[1], eye[2]], model.angles, model.scale);
         }
-        gl.uniformMatrix4fv(gl.getUniformLocation(prog3D, 'u_model'), false, modelMat);
+        gl.uniformMatrix4fv(uniformLocation(prog3D, 'u_model'), false, modelMat);
         const normMat = mat3NormalMatrix(modelMat);
-        gl.uniformMatrix3fv(gl.getUniformLocation(prog3D, 'u_normMat'), false, normMat);
+        gl.uniformMatrix3fv(uniformLocation(prog3D, 'u_normMat'), false, normMat);
 
         const gpu = getGpuMesh(mesh);
         gl.bindBuffer(gl.ARRAY_BUFFER, gpu.posBuf);
@@ -1435,20 +1606,20 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
         gl.vertexAttribPointer(locUv2, 2, gl.FLOAT, false, 0, 0);
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gpu.idxBuf);
 
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_isDome'), flags.dome ? 1 : 0);
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_isShadow'), flags.shadow ? 1 : 0);
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_isGrid'), flags.grid ? 1 : 0);
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_isSkybox'), flags.skybox ? 1 : 0);
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_isSelfIllum'), flags.selfIllum ? 1 : 0);
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_isCarBody'), flags.body ? 1 : 0);
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_isGlass'), flags.glass ? 1 : 0);
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_isJet'), flags.jet ? 1 : 0);
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_isAurora'), flags.aurora ? 1 : 0);
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_isThunder'), flags.thunder ? 1 : 0);
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_isBg'), flags.bg ? 1 : 0);
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_isNeonSun'), flags.neonSun ? 1 : 0);
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_gradFade'), mesh.gradFade ? 1 : 0);
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_hasTint'), mesh.tint || flags.neonSun ? 1 : 0);
+        gl.uniform1i(uniformLocation(prog3D, 'u_isDome'), flags.dome ? 1 : 0);
+        gl.uniform1i(uniformLocation(prog3D, 'u_isShadow'), flags.shadow ? 1 : 0);
+        gl.uniform1i(uniformLocation(prog3D, 'u_isGrid'), flags.grid ? 1 : 0);
+        gl.uniform1i(uniformLocation(prog3D, 'u_isSkybox'), flags.skybox ? 1 : 0);
+        gl.uniform1i(uniformLocation(prog3D, 'u_isSelfIllum'), flags.selfIllum ? 1 : 0);
+        gl.uniform1i(uniformLocation(prog3D, 'u_isCarBody'), flags.body ? 1 : 0);
+        gl.uniform1i(uniformLocation(prog3D, 'u_isGlass'), flags.glass ? 1 : 0);
+        gl.uniform1i(uniformLocation(prog3D, 'u_isJet'), flags.jet ? 1 : 0);
+        gl.uniform1i(uniformLocation(prog3D, 'u_isAurora'), flags.aurora ? 1 : 0);
+        gl.uniform1i(uniformLocation(prog3D, 'u_isThunder'), flags.thunder ? 1 : 0);
+        gl.uniform1i(uniformLocation(prog3D, 'u_isBg'), flags.bg ? 1 : 0);
+        gl.uniform1i(uniformLocation(prog3D, 'u_isNeonSun'), flags.neonSun ? 1 : 0);
+        gl.uniform1i(uniformLocation(prog3D, 'u_gradFade'), mesh.gradFade ? 1 : 0);
+        gl.uniform1i(uniformLocation(prog3D, 'u_hasTint'), mesh.tint || flags.neonSun ? 1 : 0);
         const uc = mesh.userColors || {};
         let tintCol = mesh.tint || [1, 1, 1];
         let tint2Col = mesh.tint2 || tintCol;
@@ -1456,16 +1627,16 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
           tintCol = uc.colorsuntop || tintCol;
           tint2Col = uc.colorsunbottom || tint2Col;
         }
-        gl.uniform3f(gl.getUniformLocation(prog3D, 'u_tint'), tintCol[0], tintCol[1], tintCol[2]);
-        gl.uniform3f(gl.getUniformLocation(prog3D, 'u_tint2'), tint2Col[0], tint2Col[1], tint2Col[2]);
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_hasLightmap'), 0);
+        gl.uniform3f(uniformLocation(prog3D, 'u_tint'), tintCol[0], tintCol[1], tintCol[2]);
+        gl.uniform3f(uniformLocation(prog3D, 'u_tint2'), tint2Col[0], tint2Col[1], tint2Col[2]);
+        gl.uniform1i(uniformLocation(prog3D, 'u_hasLightmap'), 0);
         if (mesh.lightmapUrl) {
           const lightmapRec = loadTexture(mesh.lightmapUrl, false);
           if (lightmapRec.loaded) {
             gl.activeTexture(gl.TEXTURE2);
             gl.bindTexture(gl.TEXTURE_2D, lightmapRec.texture);
-            gl.uniform1i(gl.getUniformLocation(prog3D, 'u_lightmap'), 2);
-            gl.uniform1i(gl.getUniformLocation(prog3D, 'u_hasLightmap'), 1);
+            gl.uniform1i(uniformLocation(prog3D, 'u_lightmap'), 2);
+            gl.uniform1i(uniformLocation(prog3D, 'u_hasLightmap'), 1);
             gl.activeTexture(gl.TEXTURE0);
           }
         }
@@ -1475,7 +1646,7 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
           if (tex2Rec.loaded) {
             gl.activeTexture(gl.TEXTURE1);
             gl.bindTexture(gl.TEXTURE_2D, tex2Rec.texture);
-            gl.uniform1i(gl.getUniformLocation(prog3D, 'u_tex2'), 1);
+            gl.uniform1i(uniformLocation(prog3D, 'u_tex2'), 1);
             gl.activeTexture(gl.TEXTURE0);
           }
         }
@@ -1485,13 +1656,13 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
         if (mesh.noDepthWrite) gl.depthMask(false);
 
         const sp = getSpecParams(mesh.texUrl);
-        gl.uniform1f(gl.getUniformLocation(prog3D, 'u_specStrength'), sp[0]);
-        gl.uniform1f(gl.getUniformLocation(prog3D, 'u_specPower'), sp[1]);
+        gl.uniform1f(uniformLocation(prog3D, 'u_specStrength'), sp[0]);
+        gl.uniform1f(uniformLocation(prog3D, 'u_specPower'), sp[1]);
 
         if (flags.body) {
           const strCol = sceneData.carStripesColor || [0, 0, 0];
-          gl.uniform3f(gl.getUniformLocation(prog3D, 'u_paintColor'), bodyCol[0], bodyCol[1], bodyCol[2]);
-          gl.uniform3f(gl.getUniformLocation(prog3D, 'u_stripeColor'), strCol[0], strCol[1], strCol[2]);
+          gl.uniform3f(uniformLocation(prog3D, 'u_paintColor'), bodyCol[0], bodyCol[1], bodyCol[2]);
+          gl.uniform3f(uniformLocation(prog3D, 'u_stripeColor'), strCol[0], strCol[1], strCol[2]);
         }
 
         // Load texture for all meshes that have one (including skybox)
@@ -1500,15 +1671,15 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
           if (texRec.loaded) {
             gl.activeTexture(gl.TEXTURE0);
             gl.bindTexture(gl.TEXTURE_2D, texRec.texture);
-            gl.uniform1i(gl.getUniformLocation(prog3D, 'u_tex'), 0);
-            gl.uniform1i(gl.getUniformLocation(prog3D, 'u_hasTex'), 1);
+            gl.uniform1i(uniformLocation(prog3D, 'u_tex'), 0);
+            gl.uniform1i(uniformLocation(prog3D, 'u_hasTex'), 1);
           } else {
-            gl.uniform1i(gl.getUniformLocation(prog3D, 'u_hasTex'), 0);
-            gl.uniform3f(gl.getUniformLocation(prog3D, 'u_color'), 0.7, 0.7, 0.75);
+            gl.uniform1i(uniformLocation(prog3D, 'u_hasTex'), 0);
+            gl.uniform3f(uniformLocation(prog3D, 'u_color'), 0.7, 0.7, 0.75);
           }
         } else {
-          gl.uniform1i(gl.getUniformLocation(prog3D, 'u_hasTex'), 0);
-          gl.uniform3f(gl.getUniformLocation(prog3D, 'u_color'), 0.65, 0.68, 0.72);
+          gl.uniform1i(uniformLocation(prog3D, 'u_hasTex'), 0);
+          gl.uniform3f(uniformLocation(prog3D, 'u_color'), 0.65, 0.68, 0.72);
         }
 
         gl.drawElements(gl.TRIANGLES, gpu.iCount, gpu.idxType, 0);
@@ -1534,7 +1705,7 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
 
         // Dome to FBO
         gl.depthMask(false);
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_hasReflTex'), 0);
+        gl.uniform1i(uniformLocation(prog3D, 'u_hasReflTex'), 0);
         for (const model of domeModels) {
           for (const mesh of model.meshes) drawMesh(model, mesh, { dome: true });
         }
@@ -1573,7 +1744,7 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
 
       // 1. Skybox / Dome: render first, no depth write
       gl.depthMask(false);
-      gl.uniform1i(gl.getUniformLocation(prog3D, 'u_hasReflTex'), 0);
+      gl.uniform1i(uniformLocation(prog3D, 'u_hasReflTex'), 0);
       for (const model of skyboxModels) {
         for (const mesh of model.meshes) drawMesh(model, mesh, { skybox: true });
       }
@@ -1606,7 +1777,7 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
         for (const { model, mesh } of neonGridQueue) {
           drawNeonGrid(model, mesh, proj3D, view3D, elapsed);
         }
-        gl.useProgram(prog3D);
+        useProgram(prog3D);
         for (const { model, mesh } of translucentQueue) {
           drawMesh(model, mesh, { bg: (mesh.shader || '') === 'bg', neonSun: (mesh.shader || '') === 'neonsun' });
         }
@@ -1625,14 +1796,14 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
       if (hasGrid && reflTex) {
         gl.activeTexture(gl.TEXTURE1);
         gl.bindTexture(gl.TEXTURE_2D, reflTex);
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_reflTex'), 1);
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_hasReflTex'), 1);
-        gl.uniform2f(gl.getUniformLocation(prog3D, 'u_resolution'), width, height);
+        gl.uniform1i(uniformLocation(prog3D, 'u_reflTex'), 1);
+        gl.uniform1i(uniformLocation(prog3D, 'u_hasReflTex'), 1);
+        gl.uniform2f(uniformLocation(prog3D, 'u_resolution'), width, height);
       }
       for (const model of gridModels) {
         for (const mesh of model.meshes) drawMesh(model, mesh, { grid: true });
       }
-      gl.uniform1i(gl.getUniformLocation(prog3D, 'u_hasReflTex'), 0);
+      gl.uniform1i(uniformLocation(prog3D, 'u_hasReflTex'), 0);
 
       // 5. Glass (blended)
       for (const { model, mesh } of glassQueue) {
@@ -1694,12 +1865,14 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
       gl.disable(gl.DEPTH_TEST);
       gl.disable(gl.CULL_FACE);
       gl.disable(gl.BLEND);
-      requestAnimationFrame(render);
       return;
     }
 
     const sceneW = sceneData.width || 3840;
     const sceneH = sceneData.height || 2160;
+    // Select layers before cursor updates and both render passes consume them.
+    const currentPeriod = activeTimePeriod(sceneData.timeSchedule, new Date());
+    const renderLayers = sceneData.layers.filter((layer) => layerEnabledByTime(layer, currentPeriod));
 
     let scale = 1;
     if (fitMode === 'cover') {
@@ -1713,7 +1886,40 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
     const vpX = fitMode === 'fill' ? 0 : Math.round((width - vpW) / 2);
     const vpY = fitMode === 'fill' ? 0 : Math.round((height - vpH) / 2);
 
-    ensureFbo(Math.min(sceneW, 2048), Math.min(sceneH, 1080));
+    // Mirrored cursor in scene px (y-up, matching layer coords). Cover/contain
+    // letterboxing is undone through the viewport rect; fill stretches 1:1.
+    let cursorSX = -1e9, cursorSY = -1e9;
+    if (cursorActive) {
+      if (fitMode === 'fill') {
+        cursorSX = cursorX * sceneW;
+        cursorSY = (1 - cursorY) * sceneH;
+      } else {
+        const dx = cursorX * width, dy = (1 - cursorY) * height;
+        cursorSX = (dx - vpX) / Math.max(vpW, 1) * sceneW;
+        cursorSY = (dy - vpY) / Math.max(vpH, 1) * sceneH;
+      }
+
+    }
+
+    // Hide-near-cursor (WE cursorEnter/leave visibility scripts, e.g. the
+    // butterfly that vanishes to reveal the art beneath): flagged layers
+    // fade out while the pointer is over their rect and fade back after it
+    // leaves. The factor is eased per frame and shared by both passes so the
+    // FBO reflection never shows a hidden layer.
+    for (const layer of renderLayers) {
+      let hideTarget = 0;
+      if (cursorActive && layer.cursorHide) {
+        const pad = Math.min(layer.w, layer.h) * 0.12 + 24;
+        if (Math.abs(cursorSX - layer.x) <= layer.w / 2 + pad &&
+            Math.abs(cursorSY - layer.y) <= layer.h / 2 + pad) hideTarget = 1;
+      }
+      const prevK = layer._cursorHideK || 0;
+      layer._cursorHideK = prevK + (hideTarget - prevK) * Math.min(1, dt * 7);
+    }
+    const hideAlpha = (layer) => (layer.alpha != null ? layer.alpha : 1.0) * (1 - 0.999 * (layer._cursorHideK || 0));
+
+    const needsReflection = renderLayers.some(layer => layer.isReflection);
+    if (needsReflection) ensureFbo(Math.min(sceneW, 2048), Math.min(sceneH, 1080));
 
     // Projection matrix mapping scene coords (0..sceneW, 0..sceneH) to clip space (-1..1)
     const proj = mat4Ortho(0, sceneW, 0, sceneH, -1000, 1000);
@@ -1722,62 +1928,65 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
     // overlays/effect layers follow it. Preserve that order. Reversing it makes
     // an opaque base layer cover flow/sway shaders and every foreground component,
     // which presents live scenes as a wrongly cropped static texture.
-    const currentPeriod = activeTimePeriod(sceneData.timeSchedule, new Date());
-    const renderLayers = sceneData.layers.filter((layer) => layerEnabledByTime(layer, currentPeriod));
     // Pause inactive time-period videos immediately; only the author-selected
     // morning/day/dusk/night layer may consume decode resources.
     for (const layer of sceneData.layers) {
       if (layer.videoUrl) loadVideoTexture(layer, layerEnabledByTime(layer, currentPeriod));
     }
 
-    // Pass 1: Render background and sky layers into FBO for reflections
-    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
-    gl.viewport(0, 0, fboWidth, fboHeight);
-    gl.clearColor(0, 0, 0, 0);
-    gl.clear(gl.COLOR_BUFFER_BIT);
+    const aPos = attribLocation(progBasic, 'a_pos');
+    const aUv = attribLocation(progBasic, 'a_uv');
+    // Ordinary wallpapers do not need a second full-scene render pass.
+    if (needsReflection) {
+      // Pass 1: Render background and sky layers into FBO for reflections
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      gl.viewport(0, 0, fboWidth, fboHeight);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
 
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
-    gl.useProgram(progBasic);
-    gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
-    const aPos = gl.getAttribLocation(progBasic, 'a_pos');
-    const aUv = gl.getAttribLocation(progBasic, 'a_uv');
-    gl.enableVertexAttribArray(aPos);
-    gl.enableVertexAttribArray(aUv);
-    gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 16, 0);
-    gl.vertexAttribPointer(aUv, 2, gl.FLOAT, false, 16, 8);
+      useProgram(progBasic);
+      gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+      gl.enableVertexAttribArray(aPos);
+      gl.enableVertexAttribArray(aUv);
+      gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 16, 0);
+      gl.vertexAttribPointer(aUv, 2, gl.FLOAT, false, 16, 8);
 
-    gl.uniformMatrix4fv(gl.getUniformLocation(progBasic, 'u_proj'), false, proj);
-    gl.uniform1f(gl.getUniformLocation(progBasic, 'u_time'), elapsed);
-    gl.uniform4f(gl.getUniformLocation(progBasic, 'u_uvRect'), 0, 0, 1, 1);
-    gl.uniform1f(gl.getUniformLocation(progBasic, 'u_bright'), 1);
-    gl.uniform1f(gl.getUniformLocation(progBasic, 'u_power'), 1);
+      gl.uniformMatrix4fv(uniformLocation(progBasic, 'u_proj'), false, proj);
+      gl.uniform1f(uniformLocation(progBasic, 'u_time'), elapsed);
+      gl.uniform4f(uniformLocation(progBasic, 'u_uvRect'), 0, 0, 1, 1);
+      gl.uniform1f(uniformLocation(progBasic, 'u_bright'), 1);
+      gl.uniform1f(uniformLocation(progBasic, 'u_power'), 1);
 
-    // Render sky & upper layers into FBO
-    for (const layer of renderLayers) {
-      if (layer.isGround || layer.isReflection) continue;
-      const texRec = layer.videoUrl ? loadVideoTexture(layer, true) : loadTexture(layer.texUrl);
-      if (!texRec.loaded) continue;
+      // Render sky & upper layers into FBO
+      for (const layer of renderLayers) {
+        if (layer.isGround || layer.isReflection) continue;
+        const texRec = layer.videoUrl ? loadVideoTexture(layer, true) : loadTexture(layer.texUrl);
+        if (!texRec.loaded) continue;
 
-      const model = mat4Transform2D(layer.x, layer.y, layer.w, layer.h, layer.angle || 0);
-      gl.uniformMatrix4fv(gl.getUniformLocation(progBasic, 'u_model'), false, model);
-      gl.uniform1f(gl.getUniformLocation(progBasic, 'u_alpha'), layer.alpha != null ? layer.alpha : 1.0);
-      gl.uniform3f(gl.getUniformLocation(progBasic, 'u_tint'), 1, 1, 1);
-      gl.uniform1f(gl.getUniformLocation(progBasic, 'u_sway'), layer.sway || 0);
-      gl.uniform1f(gl.getUniformLocation(progBasic, 'u_sway_speed'), layer.swaySpeed || 1.0);
+        const model = mat4Transform2D(layer.x, layer.y, layer.w, layer.h, layer.angle || 0);
+        gl.uniformMatrix4fv(uniformLocation(progBasic, 'u_model'), false, model);
+        gl.uniform1f(uniformLocation(progBasic, 'u_alpha'), hideAlpha(layer));
+        gl.uniform3f(uniformLocation(progBasic, 'u_tint'), 1, 1, 1);
+        gl.uniform1f(uniformLocation(progBasic, 'u_sway'), layer.sway || 0);
+        gl.uniform1f(uniformLocation(progBasic, 'u_sway_speed'), layer.swaySpeed || 1.0);
 
-      gl.activeTexture(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_2D, texRec.texture);
-      gl.uniform1i(gl.getUniformLocation(progBasic, 'u_tex'), 0);
-      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, texRec.texture);
+        gl.uniform1i(uniformLocation(progBasic, 'u_tex'), 0);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      }
+
     }
-
     // Pass 2: Render to screen viewport
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(vpX, vpY, vpW, vpH);
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
     // Render all layers (Sky -> Ground -> Reflection -> Particles)
     for (const layer of renderLayers) {
@@ -1786,10 +1995,10 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
         const maskRec = loadTexture(layer.texUrl);
         if (!maskRec.loaded) continue;
 
-        gl.useProgram(progReflection);
+        useProgram(progReflection);
         gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
-        const rPos = gl.getAttribLocation(progReflection, 'a_pos');
-        const rUv = gl.getAttribLocation(progReflection, 'a_uv');
+        const rPos = attribLocation(progReflection, 'a_pos');
+        const rUv = attribLocation(progReflection, 'a_uv');
         gl.enableVertexAttribArray(rPos);
         gl.enableVertexAttribArray(rUv);
         gl.vertexAttribPointer(rPos, 2, gl.FLOAT, false, 16, 0);
@@ -1798,32 +2007,33 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
         // Draw the reflection quad at the layer's own rect (fullscreen for
         // legacy scene-wide reflection layers).
         const model = mat4Transform2D(layer.x, layer.y, layer.w, layer.h, layer.angle || 0);
-        gl.uniformMatrix4fv(gl.getUniformLocation(progReflection, 'u_proj'), false, proj);
-        gl.uniformMatrix4fv(gl.getUniformLocation(progReflection, 'u_model'), false, model);
-        gl.uniform4f(gl.getUniformLocation(progReflection, 'u_uvRect'), 0, 0, 1, 1);
-        gl.uniform1f(gl.getUniformLocation(progReflection, 'u_time'), elapsed);
-        gl.uniform1f(gl.getUniformLocation(progReflection, 'u_alpha'), 0.85);
+        gl.uniformMatrix4fv(uniformLocation(progReflection, 'u_proj'), false, proj);
+        gl.uniformMatrix4fv(uniformLocation(progReflection, 'u_model'), false, model);
+        gl.uniform4f(uniformLocation(progReflection, 'u_uvRect'), 0, 0, 1, 1);
+        gl.uniform1f(uniformLocation(progReflection, 'u_time'), elapsed);
+        gl.uniform1f(uniformLocation(progReflection, 'u_alpha'), 0.85);
 
         // Scene-uv rect of the quad (scene v grows downward, 0 at the top).
         const rectLeftU = (layer.x - layer.w / 2) / sceneW;
         const rectTopV = 1 - (layer.y + layer.h / 2) / sceneH;
-        gl.uniform4f(gl.getUniformLocation(progReflection, 'u_rect'),
+        gl.uniform4f(uniformLocation(progReflection, 'u_rect'),
           rectLeftU, rectTopV, layer.w / sceneW, layer.h / sceneH);
         // Water line follows the scene data when the parser resolved one;
         // otherwise keep the legacy 0.65 / 0.42 / 0.38 window.
         const waterLine = typeof layer.waterLine === 'number' ? layer.waterLine : 0.65;
         const depthScale = (1 - waterLine) / 0.35;
-        gl.uniform1f(gl.getUniformLocation(progReflection, 'u_waterLine'), waterLine);
-        gl.uniform2f(gl.getUniformLocation(progReflection, 'u_reflectRange'),
+        gl.uniform1f(uniformLocation(progReflection, 'u_waterLine'), waterLine);
+        gl.uniform2f(uniformLocation(progReflection, 'u_reflectRange'),
           waterLine - 0.23 * depthScale, 0.38 * depthScale);
+
 
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, fboTex);
-        gl.uniform1i(gl.getUniformLocation(progReflection, 'u_fbo'), 0);
+        gl.uniform1i(uniformLocation(progReflection, 'u_fbo'), 0);
 
         gl.activeTexture(gl.TEXTURE1);
         gl.bindTexture(gl.TEXTURE_2D, maskRec.texture);
-        gl.uniform1i(gl.getUniformLocation(progReflection, 'u_mask'), 1);
+        gl.uniform1i(uniformLocation(progReflection, 'u_mask'), 1);
 
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -1837,30 +2047,30 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
       if (layer.shader === 'flowimage' && layer.texUrls && layer.texUrls.length >= 4) {
         const recs = layer.texUrls.slice(0, 4).map((u) => loadTexture(u));
         if (!recs.every((r) => r.loaded)) continue;
-        gl.useProgram(progFlow);
+        useProgram(progFlow);
         gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
-        const fPos = gl.getAttribLocation(progFlow, 'a_pos');
-        const fUv = gl.getAttribLocation(progFlow, 'a_uv');
+        const fPos = attribLocation(progFlow, 'a_pos');
+        const fUv = attribLocation(progFlow, 'a_uv');
         gl.enableVertexAttribArray(fPos);
         gl.enableVertexAttribArray(fUv);
         gl.vertexAttribPointer(fPos, 2, gl.FLOAT, false, 16, 0);
         gl.vertexAttribPointer(fUv, 2, gl.FLOAT, false, 16, 8);
         const model = mat4Transform2D(layer.x, layer.y, layer.w, layer.h, layer.angle || 0);
-        gl.uniformMatrix4fv(gl.getUniformLocation(progFlow, 'u_proj'), false, proj);
-        gl.uniformMatrix4fv(gl.getUniformLocation(progFlow, 'u_model'), false, model);
+        gl.uniformMatrix4fv(uniformLocation(progFlow, 'u_proj'), false, proj);
+        gl.uniformMatrix4fv(uniformLocation(progFlow, 'u_model'), false, model);
         const fcrop = layer.uvCrop || [0, 0, 1, 1];
-        gl.uniform4f(gl.getUniformLocation(progFlow, 'u_uvRect'), fcrop[0], fcrop[1], fcrop[2], fcrop[3]);
-        gl.uniform1f(gl.getUniformLocation(progFlow, 'u_time'), elapsed);
+        gl.uniform4f(uniformLocation(progFlow, 'u_uvRect'), fcrop[0], fcrop[1], fcrop[2], fcrop[3]);
+        gl.uniform1f(uniformLocation(progFlow, 'u_time'), elapsed);
         const nums = layer.nums || {};
-        gl.uniform3f(gl.getUniformLocation(progFlow, 'u_speeds'),
+        gl.uniform3f(uniformLocation(progFlow, 'u_speeds'),
           nums.Speed0 ?? 0.01, nums.Speed1 ?? 0.01, nums.Speed2 ?? 0.01);
-        gl.uniform1f(gl.getUniformLocation(progFlow, 'u_amp'), nums.Amount ?? 1);
-        gl.uniform1f(gl.getUniformLocation(progFlow, 'u_bright'), nums.Bright ?? 1);
+        gl.uniform1f(uniformLocation(progFlow, 'u_amp'), nums.Amount ?? 1);
+        gl.uniform1f(uniformLocation(progFlow, 'u_bright'), nums.Bright ?? 1);
         const units = ['u_mask', 'u_l1', 'u_l2', 'u_l3'];
         for (let ui = 0; ui < 4; ui++) {
           gl.activeTexture(gl.TEXTURE0 + ui);
           gl.bindTexture(gl.TEXTURE_2D, recs[ui].texture);
-          gl.uniform1i(gl.getUniformLocation(progFlow, units[ui]), ui);
+          gl.uniform1i(uniformLocation(progFlow, units[ui]), ui);
         }
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -1872,35 +2082,35 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
       if (layer.shader === 'flag' && layer.texUrls && layer.texUrls.length >= 3) {
         const recs = layer.texUrls.slice(0, 3).map((u) => loadTexture(u, true));
         if (!recs.every((r) => r.loaded)) continue;
-        gl.useProgram(progFlag);
+        useProgram(progFlag);
         gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
-        const flPos = gl.getAttribLocation(progFlag, 'a_pos');
-        const flUv = gl.getAttribLocation(progFlag, 'a_uv');
+        const flPos = attribLocation(progFlag, 'a_pos');
+        const flUv = attribLocation(progFlag, 'a_uv');
         gl.enableVertexAttribArray(flPos);
         gl.enableVertexAttribArray(flUv);
         gl.vertexAttribPointer(flPos, 2, gl.FLOAT, false, 16, 0);
         gl.vertexAttribPointer(flUv, 2, gl.FLOAT, false, 16, 8);
         const model = mat4Transform2D(layer.x, layer.y, layer.w, layer.h, layer.angle || 0);
-        gl.uniformMatrix4fv(gl.getUniformLocation(progFlag, 'u_proj'), false, proj);
-        gl.uniformMatrix4fv(gl.getUniformLocation(progFlag, 'u_model'), false, model);
+        gl.uniformMatrix4fv(uniformLocation(progFlag, 'u_proj'), false, proj);
+        gl.uniformMatrix4fv(uniformLocation(progFlag, 'u_model'), false, model);
         const flcrop = layer.uvCrop || [0, 0, 1, 1];
-        gl.uniform4f(gl.getUniformLocation(progFlag, 'u_uvRect'), flcrop[0], flcrop[1], flcrop[2], flcrop[3]);
-        gl.uniform1f(gl.getUniformLocation(progFlag, 'u_time'), elapsed);
+        gl.uniform4f(uniformLocation(progFlag, 'u_uvRect'), flcrop[0], flcrop[1], flcrop[2], flcrop[3]);
+        gl.uniform1f(uniformLocation(progFlag, 'u_time'), elapsed);
         const fnums = layer.nums || {};
-        gl.uniform1f(gl.getUniformLocation(progFlag, 'u_speed'), fnums.Speed ?? 0.4);
-        gl.uniform1f(gl.getUniformLocation(progFlag, 'u_strength'), fnums.Strength ?? 0.5);
+        gl.uniform1f(uniformLocation(progFlag, 'u_speed'), fnums.Speed ?? 0.4);
+        gl.uniform1f(uniformLocation(progFlag, 'u_strength'), fnums.Strength ?? 0.5);
         const fcols = layer.userColors || {};
         const fc1 = fcols.color1 || [0, 0, 0];
         const fc2 = fcols.color2 || [0, 0, 0];
         const fc3 = fcols.color3 || [1, 1, 1];
-        gl.uniform3f(gl.getUniformLocation(progFlag, 'u_color1'), fc1[0], fc1[1], fc1[2]);
-        gl.uniform3f(gl.getUniformLocation(progFlag, 'u_color2'), fc2[0], fc2[1], fc2[2]);
-        gl.uniform3f(gl.getUniformLocation(progFlag, 'u_color3'), fc3[0], fc3[1], fc3[2]);
+        gl.uniform3f(uniformLocation(progFlag, 'u_color1'), fc1[0], fc1[1], fc1[2]);
+        gl.uniform3f(uniformLocation(progFlag, 'u_color2'), fc2[0], fc2[1], fc2[2]);
+        gl.uniform3f(uniformLocation(progFlag, 'u_color3'), fc3[0], fc3[1], fc3[2]);
         const funits = ['u_tex', 'u_normal', 'u_cloth'];
         for (let ui = 0; ui < 3; ui++) {
           gl.activeTexture(gl.TEXTURE0 + ui);
           gl.bindTexture(gl.TEXTURE_2D, recs[ui].texture);
-          gl.uniform1i(gl.getUniformLocation(progFlag, funits[ui]), ui);
+          gl.uniform1i(uniformLocation(progFlag, funits[ui]), ui);
         }
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -1908,48 +2118,152 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
         continue;
       }
 
+      // WE xray layer (cursor reveal, e.g. the butterfly that vanishes to
+      // show the art beneath): the blend texture replaces the base around
+      // the pointer. Without a resolved blend texture the layer falls
+      // through to the standard branch below.
+      if (layer.xrayBlendUrl) {
+        const baseRec = layer.videoUrl ? loadVideoTexture(layer, true) : loadTexture(layer.texUrl);
+        const blendRec = loadTexture(layer.xrayBlendUrl);
+        if (baseRec.loaded && blendRec.loaded) {
+          useProgram(progXray);
+          gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+          const xPos = attribLocation(progXray, 'a_pos');
+          const xUv = attribLocation(progXray, 'a_uv');
+          gl.enableVertexAttribArray(xPos);
+          gl.enableVertexAttribArray(xUv);
+          gl.vertexAttribPointer(xPos, 2, gl.FLOAT, false, 16, 0);
+          gl.vertexAttribPointer(xUv, 2, gl.FLOAT, false, 16, 8);
+          const xModel = mat4Transform2D(layer.x, layer.y, layer.w, layer.h, layer.angle || 0);
+          gl.uniformMatrix4fv(uniformLocation(progXray, 'u_proj'), false, proj);
+          gl.uniformMatrix4fv(uniformLocation(progXray, 'u_model'), false, xModel);
+          const xcrop = layer.uvCrop || [0, 0, 1, 1];
+          gl.uniform4f(uniformLocation(progXray, 'u_uvRect'), xcrop[0], xcrop[1], xcrop[2], xcrop[3]);
+          gl.uniform1f(uniformLocation(progXray, 'u_alpha'), hideAlpha(layer));
+          gl.uniform2f(uniformLocation(progXray, 'u_cursorUV'),
+            (cursorSX - (layer.x - layer.w / 2)) / layer.w,
+            ((layer.y + layer.h / 2) - cursorSY) / layer.h);
+          gl.uniform2f(uniformLocation(progXray, 'u_xrayAspect'), layer.w / Math.max(layer.h, 1), 1);
+          gl.uniform1f(uniformLocation(progXray, 'u_pointerScale'),
+            1 / Math.max(layer.xraySize || 0.2, 0.02));
+          gl.uniform1f(uniformLocation(progXray, 'u_multiply'), layer.xrayMultiply ?? 1);
+          gl.uniform1f(uniformLocation(progXray, 'u_cursorOn'), cursorActive ? 1 : 0);
+          gl.activeTexture(gl.TEXTURE0);
+          gl.bindTexture(gl.TEXTURE_2D, baseRec.texture);
+          gl.uniform1i(uniformLocation(progXray, 'u_tex'), 0);
+          gl.activeTexture(gl.TEXTURE1);
+          gl.bindTexture(gl.TEXTURE_2D, blendRec.texture);
+          gl.uniform1i(uniformLocation(progXray, 'u_blend'), 1);
+          gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+          gl.activeTexture(gl.TEXTURE0);
+          continue;
+        }
+      }
+
+      // WE shake effect (e.g. eye blinking, breathing UV deformation)
+      if (layer.shakeEffect) {
+        const shake = layer.shakeEffect;
+        const baseRec = layer.videoUrl ? loadVideoTexture(layer, true) : loadTexture(layer.texUrl);
+        const flowRec = shake.flowMaskUrl ? loadTexture(shake.flowMaskUrl) : null;
+        const maskRec = shake.opacityMaskUrl ? loadTexture(shake.opacityMaskUrl) : null;
+        if (baseRec.loaded && (!flowRec || flowRec.loaded) && (!maskRec || maskRec.loaded)) {
+          gl.enable(gl.BLEND);
+          gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+          useProgram(progShake);
+          gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+          const sPos = attribLocation(progShake, 'a_pos');
+          const sUv = attribLocation(progShake, 'a_uv');
+          gl.enableVertexAttribArray(sPos);
+          gl.enableVertexAttribArray(sUv);
+          gl.vertexAttribPointer(sPos, 2, gl.FLOAT, false, 16, 0);
+          gl.vertexAttribPointer(sUv, 2, gl.FLOAT, false, 16, 8);
+          const sModel = mat4Transform2D(layer.x, layer.y, layer.w, layer.h, layer.angle || 0);
+          gl.uniformMatrix4fv(uniformLocation(progShake, 'u_proj'), false, proj);
+          gl.uniformMatrix4fv(uniformLocation(progShake, 'u_model'), false, sModel);
+          const scrop = layer.uvCrop || [0, 0, 1, 1];
+          gl.uniform4f(uniformLocation(progShake, 'u_uvRect'), scrop[0], scrop[1], scrop[2], scrop[3]);
+          gl.uniform1f(uniformLocation(progShake, 'u_time'), elapsed);
+          gl.uniform1f(uniformLocation(progShake, 'u_speed'), shake.speed || 1.0);
+          gl.uniform1f(uniformLocation(progShake, 'u_strength'), shake.strength || 0.1);
+          gl.uniform2f(uniformLocation(progShake, 'u_friction'), shake.friction[0], shake.friction[1]);
+          gl.uniform2f(uniformLocation(progShake, 'u_bounds'), shake.bounds[0], shake.bounds[1]);
+          gl.uniform1i(uniformLocation(progShake, 'u_direction'), shake.direction || 0);
+          gl.uniform1f(uniformLocation(progShake, 'u_alpha'), hideAlpha(layer));
+          const lnums = layer.nums || {};
+          gl.uniform1f(uniformLocation(progShake, 'u_bright'), lnums.Bright ?? 1);
+          gl.uniform1f(uniformLocation(progShake, 'u_power'), lnums.Power ?? 1);
+
+          gl.activeTexture(gl.TEXTURE0);
+          gl.bindTexture(gl.TEXTURE_2D, baseRec.texture);
+          gl.uniform1i(uniformLocation(progShake, 'u_tex'), 0);
+
+          if (flowRec) {
+            gl.activeTexture(gl.TEXTURE1);
+            gl.bindTexture(gl.TEXTURE_2D, flowRec.texture);
+            gl.uniform1i(uniformLocation(progShake, 'u_flow'), 1);
+          }
+          if (maskRec) {
+            gl.activeTexture(gl.TEXTURE2);
+            gl.bindTexture(gl.TEXTURE_2D, maskRec.texture);
+            gl.uniform1i(uniformLocation(progShake, 'u_mask'), 2);
+            gl.uniform1i(uniformLocation(progShake, 'u_hasMask'), 1);
+          } else {
+            gl.uniform1i(uniformLocation(progShake, 'u_hasMask'), 0);
+          }
+          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+          gl.activeTexture(gl.TEXTURE0);
+          continue;
+        }
+      }
+
       // Standard image or embedded-video layer.
       const texRec = layer.videoUrl ? loadVideoTexture(layer, true) : loadTexture(layer.texUrl);
       if (!texRec.loaded) continue;
 
-      gl.useProgram(progBasic);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      useProgram(progBasic);
       gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+      gl.enableVertexAttribArray(aPos);
+      gl.enableVertexAttribArray(aUv);
       gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 16, 0);
       gl.vertexAttribPointer(aUv, 2, gl.FLOAT, false, 16, 8);
 
       const crop = layer.uvCrop || [0, 0, 1, 1];
-      gl.uniform4f(gl.getUniformLocation(progBasic, 'u_uvRect'), crop[0], crop[1], crop[2], crop[3]);
+      gl.uniform4f(uniformLocation(progBasic, 'u_uvRect'), crop[0], crop[1], crop[2], crop[3]);
       const lnums = layer.nums || {};
-      gl.uniform1f(gl.getUniformLocation(progBasic, 'u_bright'), lnums.Bright ?? 1);
-      gl.uniform1f(gl.getUniformLocation(progBasic, 'u_power'), lnums.Power ?? 1);
+      gl.uniform1f(uniformLocation(progBasic, 'u_bright'), lnums.Bright ?? 1);
+      gl.uniform1f(uniformLocation(progBasic, 'u_power'), lnums.Power ?? 1);
 
       const model = mat4Transform2D(layer.x, layer.y, layer.w, layer.h, layer.angle || 0);
-      gl.uniformMatrix4fv(gl.getUniformLocation(progBasic, 'u_proj'), false, proj);
-      gl.uniformMatrix4fv(gl.getUniformLocation(progBasic, 'u_model'), false, model);
-      gl.uniform1f(gl.getUniformLocation(progBasic, 'u_time'), elapsed);
-      gl.uniform1f(gl.getUniformLocation(progBasic, 'u_alpha'), layer.alpha != null ? layer.alpha : 1.0);
-      gl.uniform3f(gl.getUniformLocation(progBasic, 'u_tint'), 1, 1, 1);
-      gl.uniform1f(gl.getUniformLocation(progBasic, 'u_sway'), layer.sway || 0);
-      gl.uniform1f(gl.getUniformLocation(progBasic, 'u_sway_speed'), layer.swaySpeed || 1.0);
+      gl.uniformMatrix4fv(uniformLocation(progBasic, 'u_proj'), false, proj);
+      gl.uniformMatrix4fv(uniformLocation(progBasic, 'u_model'), false, model);
+      gl.uniform1f(uniformLocation(progBasic, 'u_time'), elapsed);
+      gl.uniform1f(uniformLocation(progBasic, 'u_alpha'), hideAlpha(layer));
+      gl.uniform3f(uniformLocation(progBasic, 'u_tint'), 1, 1, 1);
+
+      gl.uniform1f(uniformLocation(progBasic, 'u_sway'), layer.sway || 0);
+      gl.uniform1f(uniformLocation(progBasic, 'u_sway_speed'), layer.swaySpeed || 1.0);
 
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, texRec.texture);
-      gl.uniform1i(gl.getUniformLocation(progBasic, 'u_tex'), 0);
+      gl.uniform1i(uniformLocation(progBasic, 'u_tex'), 0);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     }
 
     // Render Particles (Shooting Stars, Fireflies)
     if (activeParticles.length > 0) {
-      gl.useProgram(progParticle);
+      useProgram(progParticle);
       gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
-      const pPos = gl.getAttribLocation(progParticle, 'a_pos');
-      const pUv = gl.getAttribLocation(progParticle, 'a_uv');
+      const pPos = attribLocation(progParticle, 'a_pos');
+      const pUv = attribLocation(progParticle, 'a_uv');
       gl.enableVertexAttribArray(pPos);
       gl.enableVertexAttribArray(pUv);
       gl.vertexAttribPointer(pPos, 2, gl.FLOAT, false, 16, 0);
       gl.vertexAttribPointer(pUv, 2, gl.FLOAT, false, 16, 8);
-      gl.uniformMatrix4fv(gl.getUniformLocation(progParticle, 'u_proj'), false, proj);
-      gl.uniform4f(gl.getUniformLocation(progParticle, 'u_uvRect'), 0, 0, 1, 1);
+      gl.uniformMatrix4fv(uniformLocation(progParticle, 'u_proj'), false, proj);
+      gl.uniform4f(uniformLocation(progParticle, 'u_uvRect'), 0, 0, 1, 1);
 
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE); // Additive luminous particles
 
@@ -1960,7 +2274,7 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
         if (texRec && texRec.loaded) {
           gl.activeTexture(gl.TEXTURE0);
           gl.bindTexture(gl.TEXTURE_2D, texRec.texture);
-          gl.uniform1i(gl.getUniformLocation(progParticle, 'u_tex'), 0);
+          gl.uniform1i(uniformLocation(progParticle, 'u_tex'), 0);
         }
 
         // Draw trail if meteor
@@ -1970,40 +2284,80 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
             const tRatio = (ti + 1) / p.trail.length;
             const tAlpha = alpha * tRatio * 0.6;
             const tModel = mat4Transform2D(tp.x, tp.y, p.size * tRatio * 1.5, p.size * 0.4, Math.atan2(p.vy, p.vx));
-            gl.uniformMatrix4fv(gl.getUniformLocation(progParticle, 'u_model'), false, tModel);
-            gl.uniform4f(gl.getUniformLocation(progParticle, 'u_color'), p.color[0], p.color[1], p.color[2], tAlpha);
+            gl.uniformMatrix4fv(uniformLocation(progParticle, 'u_model'), false, tModel);
+            gl.uniform4f(uniformLocation(progParticle, 'u_color'), p.color[0], p.color[1], p.color[2], tAlpha);
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
           }
         }
 
         const model = mat4Transform2D(p.x, p.y, p.size * (p.system.type === 'meteor' ? 3 : 1), p.size, Math.atan2(p.vy, p.vx));
-        gl.uniformMatrix4fv(gl.getUniformLocation(progParticle, 'u_model'), false, model);
-        gl.uniform4f(gl.getUniformLocation(progParticle, 'u_color'), p.color[0], p.color[1], p.color[2], alpha * p.color[3]);
+        gl.uniformMatrix4fv(uniformLocation(progParticle, 'u_model'), false, model);
+        gl.uniform4f(uniformLocation(progParticle, 'u_color'), p.color[0], p.color[1], p.color[2], alpha * p.color[3]);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       }
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     }
-
-    requestAnimationFrame(render);
   }
 
-  // Crash guard: a render exception must not freeze the wallpaper silently.
+  // One scheduler owns both handles. Cap wallpaper work at 30 FPS even on
+  // 144/240 Hz displays, and never poll while waiting, paused or context-lost.
+  const frameInterval = 1000 / 30;
+  let rafId = null, timerId = null, nextFrameAt = 0;
+  function cancelRender() {
+    if (rafId !== null) cancelAnimationFrame(rafId);
+    if (timerId !== null) clearTimeout(timerId);
+    rafId = timerId = null;
+  }
+  function scheduleRender() {
+    if (disposed || isPaused || contextLost || !sceneData || rafId !== null || timerId !== null) return;
+    const delay = nextFrameAt - performance.now();
+    if (delay > 0) {
+      timerId = setTimeout(() => { timerId = null; scheduleRender(); }, delay);
+    } else {
+      rafId = requestAnimationFrame(render);
+    }
+  }
+  function stopWithError(error) {
+    console.error('we-scene-player render error:', error && error.stack || String(error));
+    dispose();
+    window.parent.postMessage({ type: 'dsh-scene-failed' }, '*');
+  }
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    cancelRender();
+    for (const rec of videoTextureCache.values()) {
+      if (rec.videoFrameId != null) rec.video.cancelVideoFrameCallback?.(rec.videoFrameId);
+      rec.video.pause();
+      rec.video.removeAttribute('src');
+      rec.video.load();
+    }
+    videoTextureCache.clear();
+    textureCache.clear();
+    shaderCache.clear();
+    activeParticles = [];
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
+  }
+  window.__hermesSceneDispose = dispose;
+  window.addEventListener('pagehide', dispose);
   function render(now) {
+    rafId = null;
+    if (disposed || isPaused || contextLost) return;
     try {
-      if (contextLost) { requestAnimationFrame(render); return; }
       renderFrame(now);
     } catch (e) {
-      if (!window.__weRenderErr) {
-        window.__weRenderErr = 1;
-        console.error('we-scene-player render error:', e && e.stack || String(e));
-      }
-      requestAnimationFrame(render);
+      stopWithError(e);
+      return;
     }
+    nextFrameAt = now + frameInterval;
+    scheduleRender();
   }
 
   canvas.addEventListener('webglcontextlost', (event) => {
     event.preventDefault();
     contextLost = true;
+    cancelRender();
+    for (const rec of videoTextureCache.values()) rec.video.pause();
   });
   canvas.addEventListener('webglcontextrestored', () => {
     // WebGL objects are invalid after restoration. Ask the embedding
@@ -2011,7 +2365,7 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
     // stale programs/textures. The player frame is sandboxed without
     // allow-same-origin, so the embedding page's origin is unknown here;
     // '*' delivers to the window the event source check identifies.
-    window.parent.postMessage({ type: 'dsh-scene-needs-reload' }, '*');
+    if (!disposed) window.parent.postMessage({ type: 'dsh-scene-needs-reload' }, '*');
   });
 
   // Load manifest
@@ -2019,11 +2373,12 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
   fetch('/api/skin-center/we/scene-manifest/' + token)
     .then(res => res.json())
     .then(data => {
-      if (data.ok && data.manifest) {
+      if (!disposed && data.ok && data.manifest) {
         sceneData = data.manifest;
+        scheduleRender();
       }
     })
-    .catch(err => console.error('Failed to load scene manifest', err));
+    .catch(stopWithError);
 
   // Listen for controller messages; only the embedding parent may steer the
   // player. Origin cannot filter here: the player runs sandboxed without
@@ -2034,10 +2389,35 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
     if (ev.source !== window.parent) return;
     const msg = ev.data;
     if (!msg || typeof msg !== 'object') return;
+    if (disposed) return;
     if (msg.type === 'dsh-set-fit' && msg.fit) {
       fitMode = msg.fit;
     } else if (msg.type === 'dsh-set-pause') {
+      if (isPaused === !!msg.paused) return;
       isPaused = !!msg.paused;
+      if (isPaused) { pausedAt = performance.now(); cancelRender(); }
+      for (const rec of videoTextureCache.values()) {
+        if (isPaused) {
+          rec.video.pause();
+        } else if (rec.enabled && !contextLost) {
+          void rec.video.play().catch(() => {});
+        }
+      }
+      if (!isPaused) {
+        const now = performance.now();
+        if (pausedAt !== null) startTime += now - pausedAt;
+        pausedAt = null;
+        lastTime = now;
+        scheduleRender();
+      }
+    } else if (msg.type === 'dsh-set-cursor') {
+      // Mirrored pointer from the host (the iframe itself never gets input).
+      if (Number.isFinite(msg.x)) cursorX = Math.min(1, Math.max(0, msg.x));
+      if (Number.isFinite(msg.y)) cursorY = Math.min(1, Math.max(0, msg.y));
+      mouseX = cursorX;
+      mouseY = cursorY;
+      if ('active' in msg) cursorActive = !!msg.active;
+      else cursorActive = true;
     } else if (msg.type === 'dsh-recover-renderer') {
       if (gl.isContextLost()) {
         const ext = gl.getExtension('WEBGL_lose_context');
@@ -2045,12 +2425,11 @@ export const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
         else window.parent.postMessage({ type: 'dsh-scene-needs-reload' }, '*');
       } else {
         // Force an immediate fresh frame after compositor/theme changes.
-        renderFrame(performance.now());
+        scheduleRender();
       }
     }
   });
 
-  requestAnimationFrame(render);
 })();
 </script>
 </body>

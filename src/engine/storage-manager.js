@@ -21,11 +21,30 @@ export function createSkinStore(ctx) {
   const $config = atom(normalizeConfig(ctx.storage.get('config', {})))
   const $tryOnSkin = atom(null)
   const $tryOnBaseTheme = atom(null)
+  let saveTimer = null
+  let pendingSave = null
 
-  function saveConfig(updater) {
+  function flushPersistence() {
+    if (saveTimer !== null) clearTimeout(saveTimer)
+    saveTimer = null
+    if (pendingSave) {
+      ctx.storage.set('config', pendingSave)
+      pendingSave = null
+    }
+  }
+
+  function saveConfig(updater, { deferPersistence = false } = {}) {
     const prev = $config.get()
+    if (typeof updater !== 'function' && Object.entries(updater).every(([key, value]) => Object.is(prev[key], value))) {
+      if (!deferPersistence) flushPersistence()
+      return prev
+    }
     const next = normalizeConfig(typeof updater === 'function' ? updater(prev) : { ...prev, ...updater })
-    ctx.storage.set('config', next)
+    pendingSave = next
+    if (deferPersistence) {
+      if (saveTimer !== null) clearTimeout(saveTimer)
+      saveTimer = setTimeout(flushPersistence, 200)
+    } else flushPersistence()
     $config.set(next)
     return next
   }
@@ -45,5 +64,11 @@ export function createSkinStore(ctx) {
     saveConfig(prev => ({ ...prev, customSkins: [skin, ...prev.customSkins] }))
   }
 
-  return { $config, $tryOnSkin, $tryOnBaseTheme, saveConfig, startTryOn, exitTryOn, addCustomSkin }
+  if (typeof window !== 'undefined') window.addEventListener('pagehide', flushPersistence)
+  function destroy() {
+    flushPersistence()
+    if (typeof window !== 'undefined') window.removeEventListener('pagehide', flushPersistence)
+  }
+  return { $config, $tryOnSkin, $tryOnBaseTheme, saveConfig, startTryOn, exitTryOn, addCustomSkin,
+    flushPersistence, destroy }
 }

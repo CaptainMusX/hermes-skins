@@ -8,9 +8,9 @@ Copyright (c) 2026, zhu1090093659. All rights reserved.
 Historical upstream notice: Copyright (c) 2026, dsh-external contributors.
 Original source retains its `@linxin666/dsh-client-ui-skin-center` module identifiers.
 
-The three vendored source files match this revision after normalizing line endings. Root LICENSE: BSD-3-Clause; package.json: Apache-2.0; player file header: MIT. This discrepancy is documented in LICENSING.md. No upstream endorsement is implied.
+The three vendored source files derive from this revision with local modifications documented in third_party/dsh-skins/NOTICE.md (2026-10-04): cursor/X-ray and shake support, ripple removal, bounded scheduling, texture/video reuse and resource lifecycle controls. Root LICENSE: BSD-3-Clause; package.json: Apache-2.0; player file header: MIT. This discrepancy is documented in LICENSING.md. No upstream endorsement is implied.
 
-Changes in distributed generated bundles: internal imports/exports are removed for the desktop single-file format; TypeScript is transpiled and bundled for the scene helper; Hermes bridge and lifecycle adapters are added outside the preserved vendor source.
+Changes in distributed generated bundles: internal imports/exports are removed for the desktop single-file format; TypeScript is transpiled and bundled for the scene helper. The bundles include the vendor modifications above and additional Hermes bridge/lifecycle adapters.
 
 ## jpeg-js 0.4.4
 

@@ -21,6 +21,14 @@ from hermes_constants import get_hermes_home
 router = APIRouter()
 _lock = asyncio.Lock()
 _MAX_PKG_BYTES = 512 * 1024 * 1024
+# Scene manifest parser version. Bump when pkg-extract.ts gains manifest fields
+# so prepared caches are rebuilt: v2 adds per-layer cursor flags (cursorHide
+# for hide-near-cursor scripts), v3 adds the WE xray effect (xrayBlendUrl/
+# Size/Multiply for cursor reveal layers such as the butterfly wallpaper).
+# v6 drops the experimental cursor-driven water-ripple effect for lightweight
+# resource efficiency while keeping the butterfly cursor/xray and shake
+# features. The player also ignores legacy ripple fields in saved caches.
+_PARSER_VERSION = 6
 
 
 def _node_path() -> str | None:
@@ -54,7 +62,7 @@ def _project_files(raw_dir: str) -> tuple[Path, Path] | None:
 
 def _cache_dir(package: Path) -> Path:
     stat = package.stat()
-    key = hashlib.sha256(f"{package}:{stat.st_size}:{stat.st_mtime_ns}".encode()).hexdigest()[:24]
+    key = hashlib.sha256(f"{package}:{stat.st_size}:{stat.st_mtime_ns}:v{_PARSER_VERSION}".encode()).hexdigest()[:24]
     return get_hermes_home() / "skin-center" / "scene-cache" / key
 
 
@@ -68,6 +76,8 @@ def _prepare_scene(project: Path, package: Path) -> dict:
     if manifest_path.is_file():
         try:
             cached = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if cached.get("parserVersion", 0) < _PARSER_VERSION:
+                raise ValueError("scene cache uses an obsolete parser")
             return {"ok": True, "cached": True, "manifestPath": str(manifest_path),
                     "framePath": cached.get("framePath"), "videoPath": cached.get("videoPath"),
                     "manifest": bool(cached.get("manifest")), "scripted": bool(cached.get("scripted")),

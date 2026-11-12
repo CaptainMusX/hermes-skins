@@ -56,8 +56,8 @@ async function mapLimit(items, limit, fn) {
   return results
 }
 
-export async function readWallpaperProject(bridge, dir, source = 'manual') {
-  const entries = await entriesAt(bridge, dir)
+export async function readWallpaperProject(bridge, dir, source = 'manual', knownEntries = null) {
+  const entries = knownEntries || await entriesAt(bridge, dir)
   if (!entries?.some(entry => entry.name.toLowerCase() === 'project.json')) return null
   const text = await textAt(bridge, joinLocalPath(dir, 'project.json'))
   if (!text) return null
@@ -69,9 +69,16 @@ export async function readWallpaperProject(bridge, dir, source = 'manual') {
   const mainPath = safeProjectPath(dir, project.file)
   const candidatePreview = safeProjectPath(dir, project.preview)
   const previewPath = candidatePreview && IMAGE_EXTENSIONS.test(candidatePreview) ? candidatePreview : null
+  const filenames = new Set(entries.map(entry => entry.name.toLowerCase()))
+  const exists = async (path, relative) => {
+    if (!path) return false
+    // Most projects keep media beside project.json; its directory has already
+    // been read. Only nested paths require another native bridge round-trip.
+    if (!/[\\/]/.test(relative)) return filenames.has(relative.toLowerCase())
+    return existsAt(bridge, path)
+  }
   const [mainExists, previewExists] = await Promise.all([
-    mainPath ? existsAt(bridge, mainPath) : false,
-    previewPath ? existsAt(bridge, previewPath) : false
+    exists(mainPath, project.file), exists(previewPath, project.preview)
   ])
   const canPlayVideo = kind === 'video' && mainExists && VIDEO_EXTENSIONS.test(mainPath)
   const canShowImage = kind === 'image' && mainExists && IMAGE_EXTENSIONS.test(mainPath)
@@ -99,7 +106,7 @@ async function scanContainer(bridge, root, source) {
   const entries = await entriesAt(bridge, root)
   if (!entries) return []
   if (entries.some(entry => entry.name.toLowerCase() === 'project.json')) {
-    const project = await readWallpaperProject(bridge, root, source)
+    const project = await readWallpaperProject(bridge, root, source, entries)
     return project ? [project] : []
   }
   const dirs = entries.filter(entry => entry.isDirectory).slice(0, 1000)

@@ -77,3 +77,23 @@ test('incomplete packages fail before writing to the target installation', () =>
     assert.equal(fs.existsSync(home), false)
   } finally { cleanup(dir) }
 })
+
+test('a real CLI activation failure cannot bypass an explicit disabled entry by editing YAML', () => {
+  const dir = sandbox()
+  try {
+    const home = path.join(dir, 'disabled-home')
+    fs.mkdirSync(home, { recursive: true })
+    const config = 'plugins:\n  enabled: []\n  disabled:\n    - hermes-skins\n'
+    fs.writeFileSync(path.join(home, 'config.yaml'), config)
+    // Node is a real executable, but has no Hermes plugins command. Its
+    // nonzero exit must be surfaced, not bypassed by direct YAML mutation.
+    const result = spawnSync(process.execPath, [path.join(root, 'scripts/install-local.js')], {
+      encoding: 'utf8', timeout: 15000, windowsHide: true,
+      env: { ...process.env, HERMES_HOME: home, HERMES_CLI: process.execPath }
+    })
+    assert.notEqual(result.status, 0)
+    assert.match(result.stderr, /Hermes refused to enable/)
+    assert.equal(fs.readFileSync(path.join(home, 'config.yaml'), 'utf8'), config)
+    assert.ok(fs.existsSync(path.join(home, 'desktop-plugins/hermes-skins/plugin.js')))
+  } finally { cleanup(dir) }
+})

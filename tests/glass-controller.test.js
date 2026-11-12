@@ -64,6 +64,28 @@ test('parseSerializedColor reads every serialization the browser can emit', () =
   assert.equal(parseSerializedColor(undefined), null)
 })
 
+test('material drags preserve the parsed sheet and reuse the resolved terminal theme color', () => {
+  const f = fixture({ terminalAlpha: true })
+  try {
+    const controller = new GlassController()
+    controller.update({ enabled: true, glassTransparency: 10 })
+    const sheetText = controller.styleEl.textContent
+    const properties = new Map()
+    controller.materialRule = {
+      getPropertyValue: key => properties.get(key) || '',
+      setProperty: (key, value, priority) => { properties.set(key, value); if (key === '--user-bubble-keep') assert.equal(priority, 'important') }
+    }
+    for (let value = 0; value <= 100; value++) controller.update({ enabled: true, glassTransparency: value, bubbleOpacity: value, composerFrost: 0, surfaceFrost: 0 })
+    assert.equal(controller.styleEl.textContent, sheetText, 'the selector sheet is never reparsed during a drag')
+    assert.equal(f.created.filter(el => el.tagName === 'span').length, 1, 'there is no per-sample forced style probe')
+    assert.equal(properties.get('--hermes-skins-keep'), '0%')
+    assert.equal(properties.get('--user-bubble-keep'), '100%')
+    assert.equal(properties.get('--hermes-skins-frost'), 'none')
+    assert.equal(properties.get('--ui-terminal-surface-background'), 'rgba(128, 153, 179, 0)')
+    controller.destroy()
+  } finally { f.restore() }
+})
+
 test('patched hosts get a comma-form rgba terminal literal wired to keep', () => {
   const f = fixture({ terminalAlpha: true, resolvedColor: 'color(srgb 0.5 0.6 0.7)' })
   try {
@@ -111,6 +133,9 @@ test('endpoint levers stay honest in the generated stylesheet', () => {
     const css = glass.styleEl.textContent
     assert.ok(css.includes('--hermes-skins-keep: 0%'))
     assert.ok(css.includes('--hermes-skins-frost: none'))
+    assert.ok(css.includes('--hermes-skins-overlay-frost: none'))
+    assert.ok(css.includes('--hermes-skins-overlay-scrim-frost: none'))
+    assert.equal(/backdrop-filter: blur\((12|20)px\)/.test(css), false)
     assert.ok(css.includes('--hermes-skins-composer-frost: none'))
     assert.ok(css.includes('--user-bubble-keep: 0% !important'))
     assert.ok(css.includes('rgba(128, 153, 179, 0)'))
@@ -164,7 +189,12 @@ test('terminal boxes are observed and a real teardown releases the watcher', asy
     globalThis.window.removeEventListener('resize', listener)
     assert.equal(nudges, 1, 'one debounced resize nudge per burst')
 
+    globalThis.window.addEventListener('resize', listener)
+    observers[0].callback()
     glass.destroy()
+    await new Promise(resolve => setTimeout(resolve, 180))
+    globalThis.window.removeEventListener('resize', listener)
+    assert.equal(nudges, 1, 'teardown cancels a queued resize callback')
     assert.equal(observers[0].disconnected, true, 'teardown releases the refit watcher')
   } finally {
     globalThis.ResizeObserver = previousObserver

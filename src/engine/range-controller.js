@@ -19,6 +19,8 @@ export class RangeController {
     this.pending = new Set()
     this.queued = false
     this.active = false
+    this.frame = null
+    this.needsCleanup = false
     this.onInput = event => {
       if (event.target?.matches?.('input[type="range"]')) this.sync(event.target)
     }
@@ -101,15 +103,21 @@ export class RangeController {
     if (typeof MutationObserver === 'function') {
       this.observer = new MutationObserver(records => {
         for (const record of records) {
-          if (record.type === 'attributes') this.pending.add(record.target)
+          if (record.type === 'attributes') {
+            // min/value/type changes on non-range host widgets need no work.
+            if (this.inputs.has(record.target) || record.target.matches?.('input[type="range"]')) this.pending.add(record.target)
+          }
           else {
-            for (const node of record.addedNodes) this.pending.add(node)
+            for (const node of record.addedNodes) {
+              // Token streams commonly add text nodes. They cannot own inputs.
+              if (node.nodeType === undefined || node.nodeType === 1) this.pending.add(node)
+            }
             // Restore and release removed inputs; a node moved within the
             // document stays connected and keeps its original saved value.
-            for (const node of record.removedNodes) this.pending.add(node)
+            if (record.removedNodes.length && this.inputs.size) this.needsCleanup = true
           }
         }
-        this.queueFlush()
+        if (this.pending.size || this.needsCleanup) this.queueFlush()
       })
       // Our own style writes are deliberately excluded: they cannot feed a loop.
       this.observer.observe(document.documentElement, {
@@ -141,17 +149,36 @@ export class RangeController {
   queueFlush() {
     if (this.queued || !this.active) return
     this.queued = true
-    queueMicrotask(() => {
+    const flush = () => {
+      this.frame = null
       this.queued = false
       if (!this.active) return
+      const started = performance.now()
       for (const node of this.pending) {
-        if (node.isConnected) this.scan(node)
+        let covered = false
+        for (let parent = node.parentNode; parent; parent = parent.parentNode) {
+          if (this.pending.has(parent)) { covered = true; break }
+        }
+        if (covered || !node.isConnected) this.pending.delete(node)
       }
-      this.pending.clear()
-      for (const input of this.inputs.keys()) {
-        if (!input.isConnected || !input.matches('input[type="range"]')) this.restore(input)
+      for (const node of this.pending) {
+        this.scan(node)
+        this.pending.delete(node)
+        if (performance.now() - started > 4) break
       }
-    })
+      // Only tracked controls need cleanup. Never rescan the whole document.
+      if (this.needsCleanup || this.inputs.size) {
+        this.needsCleanup = false
+        for (const input of this.inputs.keys()) {
+          if (!input.isConnected || !input.matches('input[type="range"]')) this.restore(input)
+        }
+      }
+      if (this.pending.size) this.queueFlush()
+    }
+    // Yield to the host's chat rendering; a MutationObserver microtask must
+    // not scan DOM before every token has had a chance to paint.
+    if (typeof window !== 'undefined' && window.requestAnimationFrame) this.frame = window.requestAnimationFrame(flush)
+    else queueMicrotask(flush)
   }
 
   restore(input) {
@@ -164,6 +191,8 @@ export class RangeController {
 
   destroy() {
     this.active = false
+    if (this.frame !== null) window.cancelAnimationFrame(this.frame)
+    this.frame = null
     this.observer?.disconnect()
     this.observer = null
     if (typeof document !== 'undefined') {

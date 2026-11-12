@@ -79,13 +79,17 @@ fs.mkdirSync(out, { recursive: true })
         assert.equal(state[key].blur, 'none')
       }
       for (const key of ['chatOwner', 'sidebarOwner', 'fileOwner']) assert.equal(state[key].background, state.footer.background)
-      for (const key of ['menu', 'tooltip', 'dialog', 'select']) {
+      for (const key of ['menu', 'tooltip', 'select']) {
         assert.equal(state[key].background, state.menu.background, `${key} uses the shared floating material`)
         assert.match(state[key].background, /\/ 0\.7\)/, `${key} is translucent`)
         assert.equal(state[key].blur, 'blur(8px)')
       }
+      // The 1.3.5 overlay contract retains 74% fill on dialogs. Menus/selects
+      // retain 70%; parameter-update optimization must preserve both values.
+      assert.match(state.dialog.background, /\/ 0\.74\)/)
+      assert.equal(state.dialog.blur, 'blur(8px)')
       assert.equal(state.mask.background, maskColor)
-      assert.equal(state.raised.background, 'rgb(255, 255, 255)')
+      assert.equal(state.raised.background, state.dialog.background, 'raised surfaces retain the existing overlay material')
       assert.equal(state.swatch.background, 'rgb(68, 119, 255)', 'category markers retain meaning')
       assert.equal(state.accent.background, 'rgb(38, 117, 68)', 'accent surfaces retain meaning')
     }

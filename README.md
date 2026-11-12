@@ -4,6 +4,18 @@ A desktop plugin for Hermes with six built-in themes, a small custom-theme studi
 
 See [licensing scope](LICENSING.md) and [third-party notices](THIRD-PARTY-NOTICES.md). Original project code is MIT; third-party portions retain their own terms. This independent project is not endorsed by the referenced authors or products, and user media is not distributed with it.
 
+## 1.3.6 responsiveness optimization
+
+Range drags coalesce at the next paint and defer cosmetic storage writes. Glass controls update the parsed material rule without rebuilding the selector sheet or forcing a theme-color probe for every sample. Range discovery ignores text streams and batches nested mounts. On compatible file-origin Hermes hosts, scene resources and thumbnails load directly from their cache files; restricted hosts retain the file bridge. Video textures keep their allocations and follow decoded-frame notifications; shaders compile on demand. Existing settings and the 30 FPS ceiling are preserved. See the [analysis and verification record](docs/PERFORMANCE-1.3.6.zh.md).
+
+## 1.3.7 scene switching recovery
+
+Selecting a new scene needs the enabled backend as well as the desktop player. If its API returns 404, Wallpaper & Glass offers **Enable scene backend** through Hermes' plugin manager and checks the actual scene health route. If that route still needs a server restart, the page says so without changing the current wallpaper. Installers no longer write the allow-list directly when official activation fails. See the [repair record](docs/WALLPAPER-SWITCH-1.3.7.zh.md).
+
+## 1.3.5 performance fix
+
+Cursor-driven water ripple simulation has been removed; butterfly X-ray reveal and cursor hiding remain available. A single scheduler caps scene rendering at 30 FPS. Reflection-free scenes skip the offscreen pass, shared videos reuse texture uploads, and switching or disabling releases render/decode resources. Repeated renderer failures fall back to a still frame. Overlay blur now follows the configured frost value without an extra full-screen blur layer. See the [repair and verification record](docs/PERFORMANCE-1.3.5.zh.md).
+
 ## How it works
 
 - Themes are registered through Hermes' `THEMES_AREA`. Hermes remains the authority for the selected theme and light/dark mode.
@@ -32,7 +44,7 @@ npm test
 npm run install:desktop
 ```
 
-The installer backs up an existing `plugin.js` beside the deployed file, replaces it atomically, deploys the scene backend, and registers the plugin through `hermes plugins enable hermes-skins` (falling back to a direct allow-list edit when the CLI is unavailable). If Hermes is open, its plugin watcher should reload the file. You can also run **Reload desktop plugins** from the command palette. The first install while the gateway is already running needs one gateway restart to mount the scene API; later restarts need nothing. If the scene API reports 404 "Plugin not found", re-run the install script to restore the registration.
+The installer backs up an existing `plugin.js` beside the deployed file, replaces it atomically, deploys the scene backend, and registers the plugin through `hermes plugins enable hermes-skins`. If official activation is unavailable or refused, it reports the failure without editing the allow-list. If Hermes is open, its plugin watcher should reload the file. You can also run **Reload desktop plugins** from the command palette. If the backend was disabled when Hermes started, enabling it still needs one Hermes backend restart to mount the scene API. The wallpaper page offers an explicit recovery action for this case.
 
 The plugin appears in the sidebar as **Skin Center**; the command palette opens the gallery and toggles the wallpaper. The status bar carries no skin entry.
 
@@ -49,8 +61,8 @@ Open **Wallpaper & Glass** to browse the local Wallpaper Engine library. The plu
 Wallpaper Engine projects use these paths:
 
 - **Video** projects stream through Hermes' local `hermes-media://stream` protocol into a `<video>` element.
-- **Scene** projects are unpacked by a bundled backend (`backend/scene-helper.mjs`, PKG/TEX/MDL parsing) into a cached manifest, then rendered live by a vendored WebGL player inside an isolated iframe — 2D layer shaders, 3D scenes, particles, and embedded videos. If a scene has no renderable layers, its embedded video plays instead, and a decoded full-resolution frame is the last fallback.
-- **Web** projects are inlined — scripts, styles, and assets — into a sandboxed iframe with a Wallpaper Engine API shim. Pages that depend on unsupported CEF APIs may render differently.
+- **Scene** projects are unpacked by a bundled backend (`backend/scene-helper.mjs`, PKG/TEX/MDL parsing) into a cached manifest, then rendered live by a vendored WebGL player inside an isolated iframe — 2D layer shaders, 3D scenes, particles, and embedded videos. The host mirrors the real pointer into the player, so cursor-driven effects work: X-ray layers reveal the art beneath around the pointer (such as butterfly reveal effects), and layers scripted to hide near the cursor fade out and return. If a scene has no renderable layers, its embedded video plays instead, and a decoded full-resolution frame is the last fallback.
+- **Web** projects are inlined — scripts, styles, and assets — into a sandboxed iframe with a Wallpaper Engine API shim. The shim also re-dispatches the mirrored pointer as mousemove, so pages that hide elements near the cursor behave as in Wallpaper Engine. Pages that depend on unsupported CEF APIs may render differently.
 
 Scene preparation requires the plugin backend: `npm run install:desktop` deploys it next to the desktop plugin. Hermes must reload its local backend for newly installed API routes; this machine already has the scene route mounted. If that route is unavailable, the UI reports the failure. The selection is a reference to the existing library file, not a copied project; removing a Steam subscription can remove that file.
 

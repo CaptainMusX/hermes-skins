@@ -11,10 +11,16 @@ Copyright (c) 2026, zhu1090093659. All rights reserved.
 Historical upstream notice: Copyright (c) 2026, dsh-external contributors.
 Original module names identify @linxin666/dsh-client-ui-skin-center.
 
-The three vendored files match the pinned originals after line-ending
-normalization. Generated desktop/helper bundles remove module imports/exports,
-transpile TypeScript where required and concatenate/bundle the source. Hermes
-bridge and lifecycle adapters are implemented outside these vendor files.
+The three vendored files derive from the pinned originals and include local
+modifications (2026-10-04): cursor hiding/X-ray and shake extraction/rendering,
+cursor bridging, removal of cursor ripple simulation, bounded frame scheduling,
+texture/video reuse, and renderer resource/lifecycle controls. Original copyright
+and license notices are retained. Generated desktop/helper bundles also remove
+module imports/exports, transpile TypeScript and concatenate/bundle the source.
+Further local changes (2026-10-09) compile shader programs on demand, share
+vertex shaders, reuse video texture allocations, track decoded video frames,
+and preserve animation time through pause/resume. Additional Hermes bridge
+adapters live in the project-owned modules.
 See LICENSING.md and THIRD-PARTY-NOTICES.md for scope and distribution notices.
 
 The license at this exact revision is available at:

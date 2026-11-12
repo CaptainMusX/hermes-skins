@@ -21,6 +21,7 @@ const controllerCode = fs.readFileSync(path.join(rootDir, 'src/engine/skin-contr
 const watcherCode = fs.readFileSync(path.join(rootDir, 'src/engine/theme-watcher.js'), 'utf8')
 const weLibraryCode = fs.readFileSync(path.join(rootDir, 'src/engine/we-library.js'), 'utf8')
 const sceneCode = fs.readFileSync(path.join(rootDir, 'src/engine/scene-player.js'), 'utf8')
+const sceneBackendCode = fs.readFileSync(path.join(rootDir, 'src/engine/scene-backend.js'), 'utf8')
 const webCode = fs.readFileSync(path.join(rootDir, 'src/engine/web-player.js'), 'utf8')
 const playerCode = fs.readFileSync(path.join(rootDir, 'third_party/dsh-skins/we-player-source.ts'), 'utf8')
 const shimCode = fs.readFileSync(path.join(rootDir, 'third_party/dsh-skins/we-shim-source.ts'), 'utf8')
@@ -50,7 +51,9 @@ const bundled = `/**
  * Third-party portions: dsh-skins, pinned at 82f42bd3bf91ea88475e59a2753f87041a960a56.
  * Copyright (c) 2026, zhu1090093659; historical notice: dsh-external contributors.
  * Changes in this generated file: vendor imports/exports removed and modules concatenated;
- * Hermes adapters are added in project-owned modules. Vendor source is otherwise preserved.
+ * Local vendor changes add cursor/X-ray/shake support, remove cursor ripples, and bound
+ * rendering/resource lifecycles, compile shaders on demand, reuse video allocations,
+ * and track decoded frames. Additional Hermes adapters live in project-owned modules.
  * See LICENSING.md, THIRD-PARTY-NOTICES.md and the accompanying complete license texts.
  */
 
@@ -102,6 +105,8 @@ ${stripImportsAndExports(shimCode)}
 // ─── Scene Player Bridge ─────────────────────────────────────
 ${stripImportsAndExports(sceneCode)}
 
+${stripImportsAndExports(sceneBackendCode)}
+
 // ─── Sandboxed Web Wallpaper Bridge ──────────────────────────
 ${stripImportsAndExports(webCode)}
 
@@ -131,7 +136,9 @@ export default {
 
     // 2. Initialize engines & state
     const store = createSkinStore(ctx)
-    const backdropManager = new BackdropManager()
+    const backdropManager = new BackdropManager({
+      prepareScene: dir => ctx.rest('/scene/prepare', { method: 'POST', body: { dir } })
+    })
     const glassController = new GlassController()
     const rangeController = new RangeController()
     rangeController.start()
@@ -220,6 +227,7 @@ export default {
         disposeThemeWatcher()
         rangeController.destroy()
         controller.destroy()
+        store.destroy()
       })
     }
   }

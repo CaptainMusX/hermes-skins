@@ -2772,7 +2772,7 @@ function decodeDxt5(src, width, height) {
       if (a0 > a1) {
         for (let k = 2; k < 8; k++) alphas[k] = ((8 - k) * a0 + (k - 1) * a1) / 7 | 0;
       } else {
-        for (let k = 2; k < 6; k++) alphas[k] = ((6 - k) * a0 + (k - 2) * a1) / 5 | 0;
+        for (let k = 2; k < 6; k++) alphas[k] = ((6 - k) * a0 + (k - 1) * a1) / 5 | 0;
         alphas[6] = 0;
         alphas[7] = 255;
       }
@@ -2986,6 +2986,69 @@ function isPngBuffer(buf) {
 function isLikelyMaskOrHelper(path2) {
   const lower = path2.toLowerCase();
   return lower.includes("/masks/") || lower.includes("_mask") || lower.includes("mask") || lower.includes("flow") || lower.includes("wave") || lower.includes("noise") || lower.includes("lut") || lower.includes("distort") || lower.includes("warp") || lower.includes("vortex") || lower.includes("glow") || lower.includes("neon") || lower.includes("strip") || lower.includes("bulb") || lower.includes("led") || lower.includes("combined") || lower.includes("isometric") || lower.includes("razer") || lower.includes("len") || lower.includes("lens") || lower.includes("flare") || lower.includes("prism") || lower.includes("diffract") || lower.includes("black") || lower.includes("overlay") || lower === "sun" || lower.endsWith("/sun.tex") || lower.endsWith("/sun.json") || lower.endsWith("/sun") || lower.includes("waterripple") || lower.includes("waterflow") || lower.includes("phase") || lower.includes("normal") || lower.includes("foliagesway") || lower.includes("cursorripple") || lower.includes("\u8D5E\u52A9") || lower.includes("sponsor") || lower.includes("donate") || lower.includes("qrcode") || lower.includes("qr_code") || lower.includes("audio_bar") || lower.includes("audiobar") || lower.includes("simple_audio") || lower.includes("\u63D0\u793A\u6846") || lower.includes("tip") || lower.includes("watermark") || lower.includes("logo") || lower.includes("particle") || lower.includes("audio") || lower.includes("lightmap") || lower.includes("light_map") || lower.includes("visso") || lower.includes("font") || lower.includes("text_");
+}
+function extractShakeEffect(obj, resolveTexture, props) {
+  const enabled = (raw) => {
+    let value = raw;
+    if (raw && typeof raw === "object") {
+      const binding = raw;
+      value = binding.value;
+      if (typeof binding.user === "string") {
+        const property = props?.[binding.user];
+        const override = property && typeof property === "object" ? property.value : property;
+        if (override !== void 0) value = override;
+      }
+    }
+    return value !== false && value !== 0;
+  };
+  const effect = (Array.isArray(obj.effects) ? obj.effects : []).find(
+    (e) => e && typeof e === "object" && typeof e.file === "string" && e.file.replace(/\\/g, "/").toLowerCase() === "effects/shake/effect.json" && enabled(e.visible)
+  );
+  if (!effect) return void 0;
+  const passes = Array.isArray(effect.passes) ? effect.passes : [];
+  const pass0 = passes[0] || {};
+  const values = pass0.constantshadervalues ?? {};
+  const combos = pass0.combos ?? {};
+  const numeric = (v, fallback) => typeof v === "number" && Number.isFinite(v) ? v : fallback;
+  const vector2 = (raw, fallback) => {
+    const parsed = typeof raw === "string" ? raw.trim().split(/\s+/).map(Number) : raw;
+    return Array.isArray(parsed) && parsed.length >= 2 && typeof parsed[0] === "number" && Number.isFinite(parsed[0]) && typeof parsed[1] === "number" && Number.isFinite(parsed[1]) ? [parsed[0], parsed[1]] : fallback;
+  };
+  const directionRaw = combos.DIRECTION;
+  const direction = typeof directionRaw === "number" ? directionRaw : parseInt(String(directionRaw), 10) || 0;
+  const result = {
+    speed: numeric(values.speed, 1),
+    strength: numeric(values.strength, 0.1),
+    friction: vector2(values.friction, [1, 1]),
+    bounds: vector2(values.bounds, [0, 1]),
+    direction
+  };
+  const textures = Array.isArray(pass0.textures) ? pass0.textures : [];
+  const flowRef = textures[1];
+  if (typeof flowRef === "string" && flowRef && !flowRef.startsWith("_rt_")) {
+    const url = resolveTexture(flowRef);
+    if (url) result.flowMaskUrl = url;
+  }
+  const opacityRef = textures[3];
+  if (typeof opacityRef === "string" && opacityRef && !opacityRef.startsWith("_rt_")) {
+    const url = resolveTexture(opacityRef);
+    if (url) result.opacityMaskUrl = url;
+  }
+  return result;
+}
+function cursorLayerFlags(obj) {
+  let text = "";
+  try {
+    text = JSON.stringify(obj).toLowerCase();
+  } catch {
+    return {};
+  }
+  if (!text.includes("cursor")) return {};
+  const out = {};
+  if (/cursor(enter|leave|move|down|up|click)/.test(text) && /(visib|alpha|opacity|hide|show|fade)/.test(text)) {
+    out.cursorHide = true;
+  }
+  return out;
 }
 function hasContent(rgba, width, height) {
   const totalPixels = width * height;
@@ -3958,6 +4021,37 @@ function buildSceneManifestVia(access, token, projectOverride) {
       }
     }
     const isGround = nameLower.includes("land") || nameLower.includes("grass") || nameLower.includes("railing") || nameLower.includes("betong") || nameLower.includes("sign") || nameLower.includes("cabinet") || nameLower.includes("bush") || nameLower.includes("fence");
+    const cursorFlags = cursorLayerFlags(obj);
+    const shakeEffect = extractShakeEffect(obj, (ref) => {
+      const path2 = resolveLayerTex(ref);
+      return path2 ? resourceUrl(path2) : void 0;
+    }, props);
+    let xrayBlendUrl;
+    let xraySize = 0.2;
+    let xrayMultiply = 1;
+    const xrayEffect = (Array.isArray(obj.effects) ? obj.effects : []).find(
+      (e) => typeof e?.file === "string" && e.file.toLowerCase().includes("xray")
+    );
+    if (xrayEffect) {
+      const xrayPass = (Array.isArray(xrayEffect.passes) ? xrayEffect.passes : [])[0];
+      const xcsv = xrayPass?.constantshadervalues;
+      if (typeof xcsv?.size === "number" && Number.isFinite(xcsv.size)) {
+        xraySize = Math.min(1, Math.max(0.02, xcsv.size));
+      }
+      if (typeof xcsv?.multiply === "number" && Number.isFinite(xcsv.multiply)) {
+        xrayMultiply = Math.min(10, Math.max(0, xcsv.multiply));
+      }
+      const xrayRefs = (Array.isArray(xrayPass?.textures) ? xrayPass.textures : []).map((t) => t === null || t === void 0 ? "" : String(t));
+      const isSpriteOrUtil = (ref) => {
+        const lower = ref.toLowerCase();
+        return !lower || lower === "util/white" || lower.startsWith("_rt_") || lower.includes("halo") || lower.includes("particle/") || lower.includes("sprite");
+      };
+      const blendRef = (xrayRefs[1] && !isSpriteOrUtil(xrayRefs[1]) ? xrayRefs[1] : "") || xrayRefs.find((ref) => !isSpriteOrUtil(ref)) || "";
+      if (blendRef) {
+        const blendPath = resolveLayerTex(blendRef);
+        if (blendPath) xrayBlendUrl = resourceUrl(blendPath);
+      }
+    }
     const layerX = objOrigin[0] + alignDx;
     const layerY = objOrigin[1] + alignDy;
     if (hasReflectionEffect(obj) || nameLower === "reflection") {
@@ -3995,7 +4089,12 @@ function buildSceneManifestVia(access, token, projectOverride) {
       sway: 0,
       swaySpeed: 1.5,
       timePeriod: isTimePeriodLayer ? nameLower === "mddn" ? "manual" : nameLower : void 0,
-      videoUrl
+      videoUrl,
+      cursorHide: cursorFlags.cursorHide,
+      shakeEffect,
+      xrayBlendUrl,
+      xraySize: xrayBlendUrl ? xraySize : void 0,
+      xrayMultiply: xrayBlendUrl ? xrayMultiply : void 0
     });
   }
   if (manifest.layers.length === 0) return null;
@@ -4113,6 +4212,7 @@ function main() {
   }
   const result = {
     ...probe,
+    parserVersion: 6,
     manifest,
     resources,
     missing,

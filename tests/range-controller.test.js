@@ -137,3 +137,35 @@ test('removal, type changes and teardown restore original property priorities', 
     assert.equal(input.style.getPropertyPriority('--hermes-range-progress'), 'important')
   } finally { f.restore() }
 })
+
+test('chat text streams and unrelated attributes do not schedule range DOM scans', async () => {
+  const f = fixture()
+  try {
+    const controller = new RangeController()
+    controller.start()
+    const observer = f.observers[0]
+    const unrelated = { matches: () => false, querySelectorAll() { throw new Error('must not scan host widgets') } }
+    observer.callback(Array.from({ length: 500 }, () => ({ type: 'childList', addedNodes: [{ nodeType: 3 }], removedNodes: [] })))
+    observer.callback([{ type: 'attributes', target: unrelated }])
+    assert.equal(controller.queued, false)
+    assert.equal(controller.pending.size, 0)
+    controller.destroy()
+  } finally { f.restore() }
+})
+
+test('a nested mount burst scans the common ancestor once', async () => {
+  const f = fixture()
+  try {
+    const controller = new RangeController()
+    controller.start()
+    const input = f.makeInput(75)
+    let scans = 0
+    const parent = { isConnected: true, querySelectorAll: () => { scans++; return [input] } }
+    const child = { isConnected: true, parentNode: parent, querySelectorAll() { throw new Error('duplicate descendant scan') } }
+    f.observers[0].callback([{ type: 'childList', addedNodes: [parent, child], removedNodes: [] }])
+    await Promise.resolve()
+    assert.equal(scans, 1)
+    assert.equal(input.style.getPropertyValue('--hermes-range-progress'), '75%')
+    controller.destroy()
+  } finally { f.restore() }
+})

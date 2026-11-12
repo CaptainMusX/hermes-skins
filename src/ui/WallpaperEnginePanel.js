@@ -2,6 +2,8 @@ import { Button, Input, usePluginI18n, useValue } from '@hermes/plugin-sdk'
 import { useEffect, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 import { scanWallpaperEngine, wallpaperMediaUrl } from '../engine/we-library.js'
+import { normalizeMediaSource } from '../engine/backdrop-manager.js'
+import { enableSceneBackend, isSceneBackendMissing } from '../engine/scene-backend.js'
 
 const PAGE_SIZE = 12
 
@@ -17,7 +19,11 @@ export function WallpaperEnginePanel({ store, controller, preview, prepareScene 
   const [page, setPage] = useState(0)
   const [previews, setPreviews] = useState({})
   const [importingId, setImportingId] = useState(null)
+  const [backendMissing, setBackendMissing] = useState(false)
+  const [recoveringBackend, setRecoveringBackend] = useState(false)
+  const pendingScene = useRef(null)
   const scanRevision = useRef(0)
+  const previewCache = useRef(new Map())
   const bridge = typeof window !== 'undefined' ? window.hermesDesktop : null
   const rootsKey = config.weRoots.join('|')
 
@@ -54,16 +60,53 @@ export function WallpaperEnginePanel({ store, controller, preview, prepareScene 
     if (!bridge?.readFileDataUrl) return
     let cancelled = false
     const fetchPreviews = async () => {
+      const loaded = {}
+      // Only the current page owns React image state. Keep a small LRU across
+      // pages instead of retaining every visited full-size base64 thumbnail.
+      const publish = () => { if (!cancelled) setPreviews({ ...loaded }) }
+      for (const item of visible) {
+        const cached = previewCache.current.get(item.previewPath)
+        if (cached) {
+          loaded[item.previewPath] = cached
+          previewCache.current.delete(item.previewPath)
+          previewCache.current.set(item.previewPath, cached)
+        }
+      }
+      publish()
       for (let start = 0; start < visible.length && !cancelled; start += 4) {
         await Promise.all(visible.slice(start, start + 4).map(async item => {
-          if (previews[item.previewPath]) return
+          if (loaded[item.previewPath] || !/\.(png|jpe?g|webp|gif|bmp)$/i.test(item.previewPath || '')) return
+          try {
+            if (window.location?.protocol === 'file:') {
+              const url = normalizeMediaSource(item.previewPath)
+              if (url) {
+                const response = await fetch(url, { method: 'HEAD' })
+                if (cancelled) return
+                if (response.ok) {
+                  loaded[item.previewPath] = url
+                  previewCache.current.set(item.previewPath, url)
+                  return
+                }
+              }
+            }
+          } catch { /* Restricted hosts retain the file-data bridge below. */ }
+          if (cancelled) return
           try {
             const data = await bridge.readFileDataUrl(item.previewPath)
             if (!cancelled && typeof data === 'string' && data.startsWith('data:image/')) {
-              setPreviews(current => ({ ...current, [item.previewPath]: data }))
+              loaded[item.previewPath] = data
+              previewCache.current.set(item.previewPath, data)
             }
           } catch { /* A missing thumbnail must not block the inventory. */ }
         }))
+        let bytes = 0
+        for (const data of previewCache.current.values()) bytes += data.length * 2
+        while (previewCache.current.size > 36 || bytes > 24 * 1024 * 1024) {
+          const oldest = previewCache.current.keys().next().value
+          bytes -= previewCache.current.get(oldest).length * 2
+          previewCache.current.delete(oldest)
+        }
+        publish()
       }
     }
     void fetchPreviews()
@@ -85,6 +128,7 @@ export function WallpaperEnginePanel({ store, controller, preview, prepareScene 
 
   async function useWallpaper(item) {
     setError('')
+    setBackendMissing(false)
     setImportingId(item.id)
     try {
       let source = wallpaperMediaUrl(item.mediaPath, item.mediaType)
@@ -132,10 +176,29 @@ export function WallpaperEnginePanel({ store, controller, preview, prepareScene 
       // A blocked backend surfaces as an ipc 404 "Plugin not found" — map it
       // to the recovery action instead of the raw electron error text.
       const message = String(cause?.message || cause)
-      setError(/Plugin not found|\b404\b/.test(message) ? t('weSceneBackendMissing') : message)
+      const missing = isSceneBackendMissing(cause)
+      pendingScene.current = missing ? item : null
+      setBackendMissing(missing)
+      setError(missing ? t('weSceneBackendMissing') : message)
     } finally {
       setImportingId(null)
     }
+  }
+
+  async function recoverBackend() {
+    setRecoveringBackend(true)
+    try {
+      const result = await enableSceneBackend(bridge)
+      setBackendMissing(false)
+      if (result.ready) {
+        setError('')
+        const item = pendingScene.current
+        pendingScene.current = null
+        if (item) await useWallpaper(item)
+      } else setError(t('weSceneBackendRestartRequired'))
+    } catch (cause) {
+      setError(String(cause?.message || cause))
+    } finally { setRecoveringBackend(false) }
   }
 
   const kindLabel = kind => t({ video: 'weTypeVideo', scene: 'weTypeScene', image: 'weTypeImage', web: 'weTypeWeb' }[kind] || 'weTypeOther')
@@ -153,6 +216,9 @@ export function WallpaperEnginePanel({ store, controller, preview, prepareScene 
     ] }),
     jsx('p', { className: 'mt-3 text-xs text-muted-foreground', children: loading ? t('weScanning') : t('weFound', items.length) }),
     error && jsx('p', { className: 'mt-2 text-xs text-destructive', children: error }),
+    backendMissing && bridge?.api && jsx(Button, { size: 'sm', variant: 'outline',
+      className: 'mt-2', disabled: recoveringBackend, onClick: () => void recoverBackend(),
+      children: recoveringBackend ? t('weSceneBackendEnabling') : t('weSceneBackendEnable') }),
     !loading && config.weSelection && items.length > 0 && !items.some(item => item.id === config.weSelection.id) &&
       jsx('p', { className: 'mt-2 text-xs text-amber-600', children: t('weMissing') }),
     jsxs('div', { className: 'mt-4 flex flex-wrap items-center gap-2', children: [
@@ -170,14 +236,14 @@ export function WallpaperEnginePanel({ store, controller, preview, prepareScene 
       const selected = config.weSelection?.id === item.id
       return jsxs('article', { key: item.id, 'data-hermes-skins-surface': '', className: `overflow-hidden rounded-lg border bg-background ${selected ? 'border-primary' : 'border-border'}`, children: [
         previews[item.previewPath]
-          ? jsx('img', { src: previews[item.previewPath], alt: '', loading: 'lazy', className: 'h-36 w-full object-cover' })
+          ? jsx('img', { src: previews[item.previewPath], alt: '', loading: 'lazy', decoding: 'async', className: 'h-36 w-full object-cover' })
           : jsx('div', { className: 'h-36 bg-muted/40' }),
         jsxs('div', { className: 'space-y-2 p-3', children: [
           jsx('h3', { className: 'line-clamp-2 min-h-8 text-sm font-medium text-foreground', title: item.title, children: item.title }),
           jsx('p', { className: 'text-xs text-muted-foreground', children: item.kind === 'scene'
             ? `${kindLabel(item.kind)} · ${t('weSceneLive')}`
             : item.staticFallback ? `${kindLabel(item.kind)} · ${t('weStaticFallback')}` : kindLabel(item.kind) }),
-          jsx(Button, { size: 'sm', className: 'w-full', disabled: Boolean(preview) || Boolean(importingId),
+          jsx(Button, { size: 'sm', className: 'w-full', disabled: Boolean(preview) || Boolean(importingId) || recoveringBackend,
             variant: selected ? 'secondary' : 'default', onClick: () => void useWallpaper(item),
             children: importingId === item.id ? t('wePreparing') : selected ? t('weSelected') : t('weUse') })
         ] })

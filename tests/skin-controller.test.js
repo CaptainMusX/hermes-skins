@@ -287,3 +287,24 @@ test('dispose ends an in-progress preview and removes owned effects', () => {
   assert.ok(calls.some(call => call[0] === 'backdrop.destroy'))
   assert.ok(calls.some(call => call[0] === 'glass.destroy'))
 })
+
+test('slider bursts apply the latest values once and disposal commits the final sample', () => {
+  const original = { requestAnimationFrame: globalThis.requestAnimationFrame, cancelAnimationFrame: globalThis.cancelAnimationFrame }
+  const frames = new Map()
+  let id = 0
+  globalThis.requestAnimationFrame = callback => { frames.set(++id, callback); return id }
+  globalThis.cancelAnimationFrame = frame => frames.delete(frame)
+  try {
+    const f = fixture()
+    for (let value = 0; value < 100; value++) f.controller.scheduleConfig({ panelGlass: value })
+    assert.equal(frames.size, 1)
+    assert.equal(f.calls.length, 0, 'input handler does no full scene/glass synchronization')
+    const callback = [...frames.values()][0]; frames.clear(); callback()
+    assert.equal(f.store.$config.get().panelGlass, 99)
+    assert.equal(f.calls.filter(([name]) => name === 'backdrop').length, 1)
+    f.controller.scheduleConfig({ panelGlass: 0 })
+    f.controller.destroy()
+    assert.equal(frames.size, 0)
+    assert.equal(f.store.$config.get().panelGlass, 0, 'teardown must not lose the last drag value')
+  } finally { Object.assign(globalThis, original) }
+})

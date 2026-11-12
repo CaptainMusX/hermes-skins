@@ -1,6 +1,6 @@
 /**
  * Hermes Skin Center (hermes-skins)
- * Version: 1.3.4
+ * Version: 1.3.7
  * Author: CaptainMusX (inspired by dsh-skins)
  *
  * Standalone Desktop Plugin for Hermes Desktop.
@@ -10,7 +10,9 @@
  * Third-party portions: dsh-skins, pinned at 82f42bd3bf91ea88475e59a2753f87041a960a56.
  * Copyright (c) 2026, zhu1090093659; historical notice: dsh-external contributors.
  * Changes in this generated file: vendor imports/exports removed and modules concatenated;
- * Hermes adapters are added in project-owned modules. Vendor source is otherwise preserved.
+ * Local vendor changes add cursor/X-ray/shake support, remove cursor ripples, and bound
+ * rendering/resource lifecycles, compile shaders on demand, reuse video allocations,
+ * and track decoded frames. Additional Hermes adapters live in project-owned modules.
  * See LICENSING.md, THIRD-PARTY-NOTICES.md and the accompanying complete license texts.
  */
 
@@ -74,7 +76,10 @@ const I18N_DICTIONARY = {
     weSceneLive: 'extract and render scene on selection',
     wePreparing: 'Preparing scene…',
     weSceneBackendUnavailable: 'Scene backend unavailable. Restart the Hermes gateway after installing the plugin backend.',
-    weSceneBackendMissing: 'The scene backend is not enabled in the Hermes gateway (404). Run "npm run install:desktop" in the plugin folder, then restart Hermes.',
+    weSceneBackendMissing: 'The scene backend is disabled or its API has not loaded. Enable the scene backend below; an already playing video or cached scene does not require this API.',
+    weSceneBackendEnable: 'Enable scene backend',
+    weSceneBackendEnabling: 'Enabling scene backend…',
+    weSceneBackendRestartRequired: 'The scene backend is enabled. Restart Hermes after current tasks finish to load its scene API, then select the wallpaper again.',
     weSceneUnsupported: 'This scene has no supported renderable layers or video.',
     weUse: 'Use as wallpaper',
     weSelected: 'Selected',
@@ -176,7 +181,10 @@ const I18N_DICTIONARY = {
     weSceneLive: '选用时解包并实时渲染',
     wePreparing: '正在解包场景…',
     weSceneBackendUnavailable: '场景后端尚未启用。安装后请重启 Hermes 网关。',
-    weSceneBackendMissing: '场景后端未在网关白名单中启用(404)。请在插件目录重新运行 "npm run install:desktop",然后重启 Hermes。',
+    weSceneBackendMissing: '场景后端已禁用，或场景接口尚未加载。请点击下方“启用场景后端”；已播放的视频或缓存场景不需要此接口。',
+    weSceneBackendEnable: '启用场景后端',
+    weSceneBackendEnabling: '正在启用场景后端…',
+    weSceneBackendRestartRequired: '场景后端已启用。请等待当前任务结束后重启 Hermes，以加载场景接口，再重新选择壁纸。',
     weSceneUnsupported: '此场景没有可支持的图层或视频。',
     weUse: '设为壁纸',
     weSelected: '已选用',
@@ -787,7 +795,8 @@ function normalizeMediaSource(input, type = 'image') {
 
 /** Fixed backdrop sits behind the app shell and never receives input. */
 class BackdropManager {
-  constructor() {
+  constructor({ prepareScene = null } = {}) {
+    this.prepareScene = prepareScene
     this.root = null
     this.media = null
     this.mask = null
@@ -797,18 +806,37 @@ class BackdropManager {
     this.sceneIframe = null
     this.sceneManifest = null
     this.sceneUrls = []
+    this.sceneLoad = null
+    this.sceneReloads = 0
     this.sceneListeners = false
+    this.webIframe = null
+    this.cursorForwardInit = false
+    this.cursorFrame = null
+    this.pendingCursor = null
     this.videoElement = null
     this.pauseOnHidden = true
     this.fitValue = 'cover'
     this.modeValue = 'live'
     this.soundValue = false
     this.volumeValue = 100
+    this.lastMediaOptions = null
+    this.cursorRects = new WeakMap()
+    this.lastMaskColor = null
     this.handleSceneMessage = event => {
-      if (event.source !== this.sceneIframe?.contentWindow || event.data?.type !== 'dsh-scene-needs-reload') return
-      this.sceneIframe.srcdoc = scenePlayerHtml(this.soundValue, this.volumeValue)
+      if (!this.sceneIframe || event.source !== this.sceneIframe.contentWindow) return
+      if (event.data?.type === 'dsh-scene-failed') {
+        this.stopScene()
+        if (!this.media?.querySelector('img')) this.fail(this.currentKey)
+      } else if (event.data?.type === 'dsh-scene-needs-reload') {
+        // Repeated context loss must fall back instead of creating a reload loop.
+        if (this.sceneReloads++ >= 1) {
+          this.stopScene()
+          if (!this.media?.querySelector('img')) this.fail(this.currentKey)
+        } else this.sceneIframe.srcdoc = scenePlayerHtml(this.soundValue, this.volumeValue)
+      }
     }
     this.handleVisibility = () => {
+      if (document.hidden) this.onCursorLeave?.()
       if (this.videoElement && this.pauseOnHidden) {
         if (document.hidden) this.videoElement.pause()
         else void this.videoElement.play()?.catch(() => {})
@@ -822,6 +850,7 @@ class BackdropManager {
     if (this.root?.isConnected) return
     this.root = document.getElementById(ROOT_ID) || document.createElement('div')
     this.currentKey = null
+    this.lastMaskColor = null
     this.root.id = ROOT_ID
     this.root.setAttribute('aria-hidden', 'true')
     this.root.style.cssText = 'position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden;'
@@ -831,6 +860,62 @@ class BackdropManager {
     this.mask.style.cssText = 'position:absolute;inset:0;'
     this.root.replaceChildren(this.media, this.mask)
     document.body.prepend(this.root)
+    this.ensureCursorForwarding()
+  }
+
+  // Capture host movement without intercepting clicks. Deliver the newest
+  // sample once per animation frame, including the last event of a short drag.
+  ensureCursorForwarding() {
+    if (this.cursorForwardInit || typeof window === 'undefined') return
+    this.cursorForwardInit = true
+    this.onCursorMove = event => {
+      if (document.hidden || (!this.sceneIframe && !this.webIframe)) return
+      this.pendingCursor = { x: event.clientX / Math.max(window.innerWidth, 1),
+        y: event.clientY / Math.max(window.innerHeight, 1) }
+      if (this.cursorFrame !== null) return
+      this.cursorFrame = window.requestAnimationFrame(() => {
+        this.cursorFrame = null
+        const cursor = this.pendingCursor
+        this.pendingCursor = null
+        if (cursor) this.forwardCursor(cursor.x, cursor.y, true)
+      })
+    }
+    this.onCursorLeave = () => {
+      if (this.cursorFrame !== null) window.cancelAnimationFrame(this.cursorFrame)
+      this.cursorFrame = null
+      this.pendingCursor = null
+      this.forwardCursor(0.5, 0.5, false)
+    }
+    window.addEventListener('mousemove', this.onCursorMove, { passive: true, capture: true })
+    window.addEventListener('mouseleave', this.onCursorLeave)
+    document.addEventListener('mouseleave', this.onCursorLeave)
+    window.addEventListener('blur', this.onCursorLeave)
+  }
+
+  forwardCursor(x, y, active) {
+    const position = frame => {
+      if (!frame) return { x, y, active }
+      // The iframe is fixed inside the overscanned backdrop. Its geometry
+      // changes with viewport/blur, rather than with every mouse sample.
+      const geometryKey = `${window.innerWidth}:${window.innerHeight}:${this.media?.style.inset}`
+      let geometry = this.cursorRects.get(frame)
+      if (!geometry || geometry.key !== geometryKey) {
+        geometry = { key: geometryKey, rect: frame.getBoundingClientRect?.() }
+        this.cursorRects.set(frame, geometry)
+      }
+      const rect = geometry.rect
+      if (!rect?.width || !rect?.height) return { x, y, active }
+      const px = (x * window.innerWidth - rect.left) / rect.width
+      const py = (y * window.innerHeight - rect.top) / rect.height
+      return { x: Math.min(1, Math.max(0, px)), y: Math.min(1, Math.max(0, py)),
+        active: active && px >= 0 && px <= 1 && py >= 0 && py <= 1 }
+    }
+    try {
+      this.sceneIframe?.contentWindow?.postMessage({ type: 'dsh-set-cursor', ...position(this.sceneIframe) }, '*')
+    } catch { /* The scene frame may still be loading. */ }
+    try {
+      this.webIframe?.contentWindow?.postMessage({ type: 'hermes-we-cursor', ...position(this.webIframe) }, '*')
+    } catch { /* The web frame may still be loading. */ }
   }
 
   update({ enabled, type = 'image', src, sceneFrame = null, webPreview = null, blur = 0, occlusion = 35,
@@ -853,12 +938,13 @@ class BackdropManager {
     // coerced here. A legal 0 (no blur, fully transparent, silent) passes
     // through untouched.
     const blurValue = Number.isFinite(Number(blur)) ? Math.min(60, Math.max(0, Number(blur))) : 0
-    this.media.style.filter = blurValue > 0 ? `blur(${blurValue}px)` : 'none'
+    const writeStyle = (el, key, value) => { if (el.style[key] !== value) el.style[key] = value }
+    writeStyle(this.media, 'filter', blurValue > 0 ? `blur(${blurValue}px)` : 'none')
     // Overscan the media box by the blur radius: gaussian sampling beyond the
     // element edge would otherwise fade to the backdrop's absence (a white or
     // theme-colored rim at large blurs). The mask keeps the viewport bounds.
-    this.media.style.inset = `-${blurValue + 8}px`
-    this.media.style.opacity = `${(Number.isFinite(Number(opacity)) ? Math.min(100, Math.max(0, Number(opacity))) : 100) / 100}`
+    writeStyle(this.media, 'inset', `-${blurValue + 8}px`)
+    writeStyle(this.media, 'opacity', `${(Number.isFinite(Number(opacity)) ? Math.min(100, Math.max(0, Number(opacity))) : 100) / 100}`)
     this.fitValue = ['cover', 'contain', 'fill'].includes(fit) ? fit : 'cover'
     this.modeValue = mode === 'frame' ? 'frame' : 'live'
     this.pauseOnHidden = Boolean(pauseOnHidden)
@@ -867,15 +953,19 @@ class BackdropManager {
     // Endpoint honesty: occlusion 100 = the veil fully hides the wallpaper.
     // The old Math.min(0.9, …) ceiling is gone — 1.0 is a legal, reachable end.
     const alpha = (Number.isFinite(Number(occlusion)) ? Math.min(100, Math.max(0, Number(occlusion))) : 35) / 100
-    this.mask.style.backgroundColor = isDark ? `rgba(0,0,0,${alpha})` : `rgba(255,255,255,${alpha})`
+    const maskColor = isDark ? `rgba(0,0,0,${alpha})` : `rgba(255,255,255,${alpha})`
+    if (this.lastMaskColor !== maskColor) this.mask.style.backgroundColor = maskColor
+    this.lastMaskColor = maskColor
     if (key === this.currentKey) {
       this.syncMediaOptions(type, { fit: this.fitValue, sound, volume, pauseOnHidden })
       return true
     }
     this.currentKey = key
-    this.releaseSceneUrls()
-    this.sceneIframe = null
+    this.releaseMedia()
+    this.lastMediaOptions = null
+    this.sceneReloads = 0
     this.sceneManifest = null
+    this.webIframe = null
     this.media.replaceChildren()
     this.media.style.backgroundImage = 'none'
     if (type === 'scene') {
@@ -897,7 +987,8 @@ class BackdropManager {
       this.videoElement = video
       this.ensurePlaybackListeners()
       if (this.modeValue === 'frame') {
-        video.addEventListener('loadeddata', () => {
+      video.addEventListener('loadeddata', () => {
+          if (this.currentKey !== key || this.videoElement !== video) return
           try {
             const canvas = document.createElement('canvas')
             const scale = Math.min(1, 1920 / Math.max(video.videoWidth, video.videoHeight))
@@ -909,7 +1000,7 @@ class BackdropManager {
             image.style.cssText = `width:100%;height:100%;object-fit:${this.fitValue};display:block;`
             if (this.currentKey === key) this.media.replaceChildren(image)
           } catch { /* The live video remains visible if capture is blocked by CORS. */ }
-          finally { video.pause(); this.videoElement = null }
+          finally { video.pause(); if (this.videoElement === video) this.videoElement = null }
         }, { once: true })
       }
       this.media.appendChild(video)
@@ -942,6 +1033,9 @@ class BackdropManager {
   }
 
   syncMediaOptions(type, options) {
+    const optionsKey = `${type}:${options.fit}:${options.sound}:${options.volume}:${options.pauseOnHidden}`
+    if (this.lastMediaOptions === optionsKey) return
+    this.lastMediaOptions = optionsKey
     const video = this.media?.querySelector('video')
     if (video) {
       video.style.objectFit = options.fit
@@ -994,9 +1088,11 @@ class BackdropManager {
 
   async showScene(key, manifestPath) {
     const bridge = typeof window !== 'undefined' ? window.hermesDesktop : null
+    const load = new AbortController()
+    this.sceneLoad = load
     try {
-      const scene = await loadSceneManifest(bridge, manifestPath)
-      if (this.currentKey !== key) {
+      const scene = await loadSceneManifest(bridge, manifestPath, this.prepareScene, load.signal)
+      if (load.signal.aborted || this.currentKey !== key) {
         scene.objectUrls.forEach(url => URL.revokeObjectURL(url))
         return
       }
@@ -1007,6 +1103,7 @@ class BackdropManager {
       frame.setAttribute('aria-hidden', 'true')
       frame.style.cssText = `position:absolute;inset:0;width:100%;height:100%;border:0;pointer-events:none;object-fit:${this.fitValue};`
       frame.onload = () => {
+        if (this.sceneIframe !== frame) return
         frame.contentWindow?.postMessage({ type: 'hermes-scene-manifest', manifest: scene.manifest }, '*')
         frame.contentWindow?.postMessage({ type: 'dsh-set-fit', fit: this.fitValue }, '*')
         frame.contentWindow?.postMessage({ type: 'dsh-set-pause', paused: document.hidden && this.pauseOnHidden }, '*')
@@ -1023,7 +1120,9 @@ class BackdropManager {
     } catch {
       // A decoded full-resolution frame remains visible if the WebGL scene
       // cannot be prepared by this Hermes build.
-      if (this.currentKey === key && !this.media.querySelector('img')) this.fail(key)
+      if (!load.signal.aborted && this.currentKey === key && !this.media?.querySelector('img')) this.fail(key)
+    } finally {
+      if (this.sceneLoad === load) this.sceneLoad = null
     }
   }
 
@@ -1045,6 +1144,7 @@ class BackdropManager {
       frame.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:0;pointer-events:none;'
       frame.style.objectFit = this.fitValue
       frame.srcdoc = html
+      this.webIframe = frame
       this.media.appendChild(frame)
     } catch {
       if (this.currentKey === key && !this.media.querySelector('img')) this.fail(key)
@@ -1060,15 +1160,34 @@ class BackdropManager {
 
   hide() {
     if (this.root) this.root.style.display = 'none'
-    const video = this.media?.querySelector('video')
-    if (video) video.pause()
-    this.videoElement = null
+    this.releaseMedia()
     this.media?.replaceChildren()
     if (this.media) this.media.style.backgroundImage = 'none'
     this.currentKey = null
     this.sceneIframe = null
     this.sceneManifest = null
+    this.webIframe = null
+  }
+
+  stopScene() {
+    try { this.sceneIframe?.contentWindow?.__hermesSceneDispose?.() } catch { /* Frame is already unloaded. */ }
+    this.sceneIframe?.remove?.()
+    this.sceneIframe = null
     this.releaseSceneUrls()
+  }
+
+  releaseMedia() {
+    this.sceneLoad?.abort()
+    this.sceneLoad = null
+    this.onCursorLeave?.()
+    const video = this.videoElement || this.media?.querySelector('video')
+    if (video) {
+      video.pause()
+      video.removeAttribute('src')
+      video.load()
+    }
+    this.videoElement = null
+    this.stopScene()
   }
 
   releaseSceneUrls() {
@@ -1077,6 +1196,16 @@ class BackdropManager {
   }
 
   destroy() {
+    if (this.cursorForwardInit) {
+      window.removeEventListener('mousemove', this.onCursorMove, { capture: true })
+      window.removeEventListener('mouseleave', this.onCursorLeave)
+      document.removeEventListener('mouseleave', this.onCursorLeave)
+      window.removeEventListener('blur', this.onCursorLeave)
+      if (this.cursorFrame !== null) window.cancelAnimationFrame(this.cursorFrame)
+      this.cursorFrame = null
+      this.pendingCursor = null
+      this.cursorForwardInit = false
+    }
     this.hide()
     this.root?.remove()
     this.root = null
@@ -1141,6 +1270,11 @@ class GlassController {
     this.refitObserver = null
     this.refitTargets = new Set()
     this.refitQueued = false
+    this.refitTimer = null
+    this.materialRule = null
+    this.lastMaterialKey = null
+    this.terminalThemeKey = null
+    this.terminalBase = null
   }
 
   update({ enabled, glassTransparency = 10, bubbleOpacity = 100, composerFrost = 10, surfaceFrost = 8 }) {
@@ -1151,10 +1285,15 @@ class GlassController {
       const styleEl = this.styleEl || document.getElementById(STYLE_ID)
       styleEl?.remove()
       this.styleEl = null
+      this.materialRule = null
+      this.lastMaterialKey = null
+      this.terminalThemeKey = null
       this.releaseRefitWatcher()
       return
     }
     if (!this.styleEl || !document.head.contains(this.styleEl)) {
+      this.materialRule = null
+      this.lastMaterialKey = null
       this.styleEl = document.getElementById(STYLE_ID) || document.createElement('style')
       this.styleEl.id = STYLE_ID
       this.styleEl.dataset.plugin = 'hermes-skins'
@@ -1181,8 +1320,8 @@ class GlassController {
     // Frosted glass samples the wallpaper behind a surface; blur(0) would still
     // promote a composited layer, so the frost vars stay `none` when off.
     const frost = surfaceBlur > 0 ? `blur(${surfaceBlur}px)` : 'none'
-    const overlayFrost = surfaceBlur > 0 ? `blur(${Math.max(16, surfaceBlur * 2)}px) saturate(180%)` : 'none'
-    const overlayScrimFrost = surfaceBlur > 0 ? `blur(${Math.max(10, surfaceBlur)}px)` : 'none'
+    const overlayFrost = frost
+    const overlayScrimFrost = 'none'
     const composerFrostCss = composerBlur > 0 ? `blur(${composerBlur}px)` : 'none'
 
     // Terminal: xterm resolves --ui-terminal-surface-background to a concrete
@@ -1198,18 +1337,50 @@ class GlassController {
     // "color(srgb …)" and paint the canvas black, and probing --ui-bg-chrome
     // keeps the value tracking the official light/dark mode on every sync.
     const terminalAlpha = root.dataset?.hermesTerminalAlpha === 'true'
+    const themeKey = `${root.dataset?.hermesTheme}:${root.dataset?.hermesMode}:${root.className}:${root.style?.cssText || ''}`
+    const materialKey = `${keep}:${bubbleKeep}:${composerBlur}:${surfaceBlur}:${terminalAlpha}:${themeKey}`
+    if (this.lastMaterialKey === materialKey && this.styleEl.isConnected) return
     let terminalSurface = 'var(--ui-bg-chrome)'
     if (terminalAlpha && document.body) {
-      const probe = document.createElement('span')
-      probe.style.cssText = 'position:absolute;visibility:hidden;pointer-events:none;background-color:var(--ui-bg-chrome);'
-      document.body.appendChild(probe)
-      const base = parseSerializedColor(getComputedStyle(probe).backgroundColor)
-      probe.remove()
+      // The resolved theme color only changes with the host theme. Reusing it
+      // avoids an append -> getComputedStyle -> remove flush on every drag.
+      if (this.terminalThemeKey !== themeKey) {
+        const probe = document.createElement('span')
+        probe.style.cssText = 'position:absolute;visibility:hidden;pointer-events:none;background-color:var(--ui-bg-chrome);'
+        document.body.appendChild(probe)
+        this.terminalBase = parseSerializedColor(getComputedStyle(probe).backgroundColor)
+        probe.remove()
+        this.terminalThemeKey = themeKey
+      }
+      const base = this.terminalBase
       if (base) terminalSurface = `rgba(${base.r}, ${base.g}, ${base.b}, ${keep / 100})`
     }
 
-    root.setAttribute('data-hermes-skins-active', 'true')
-    this.styleEl.textContent = `
+    if (root.getAttribute?.('data-hermes-skins-active') !== 'true') root.setAttribute('data-hermes-skins-active', 'true')
+    if (this.materialRule) {
+      // Keep the large selector sheet parsed and change only its material
+      // properties. CSSOM edits do not enqueue childList mutation scans.
+      const properties = {
+        '--hermes-skins-keep': `${keep}%`,
+        '--hermes-skins-floating-tint': `color-mix(in srgb, var(--ui-bg-chrome) ${floatingKeep}%, transparent)`,
+        '--hermes-skins-overlay-tint': `color-mix(in srgb, var(--ui-bg-chrome) ${overlayKeep}%, transparent)`,
+        '--hermes-skins-overlay-sidebar-tint': `color-mix(in srgb, var(--ui-bg-sidebar) ${Math.max(25, overlayKeep - 40)}%, transparent)`,
+        '--hermes-skins-frost': frost,
+        '--hermes-skins-overlay-frost': overlayFrost,
+        '--hermes-skins-overlay-scrim-frost': overlayScrimFrost,
+        '--hermes-skins-composer-frost': composerFrostCss,
+        '--user-bubble-keep': `${bubbleKeep}%`,
+        '--ui-terminal-surface-background': terminalSurface
+      }
+      for (const [name, value] of Object.entries(properties)) {
+        if (this.materialRule.getPropertyValue(name).trim() !== value) {
+          this.materialRule.setProperty(name, value, name === '--user-bubble-keep' ? 'important' : '')
+        }
+      }
+      this.lastMaterialKey = materialKey
+      return
+    }
+    const css = `
       :root[data-hermes-skins-active="true"] {
         --hermes-skins-keep: ${keep}%;
         --hermes-skins-chrome-tint: color-mix(in srgb, var(--ui-bg-chrome) var(--hermes-skins-keep), transparent);
@@ -1421,16 +1592,16 @@ class GlassController {
          with clean text readability and wallpaper translucency. */
       :root[data-hermes-skins-active="true"] [data-overlay-surface] {
         background-color: color-mix(in srgb, #000 18%, transparent) !important;
-        backdrop-filter: blur(12px) !important;
-        -webkit-backdrop-filter: blur(12px) !important;
+        backdrop-filter: var(--hermes-skins-overlay-scrim-frost) !important;
+        -webkit-backdrop-filter: var(--hermes-skins-overlay-scrim-frost) !important;
       }
       :root[data-hermes-skins-active="true"] [data-glass-raised] {
         --ui-chat-surface-background: var(--hermes-skins-overlay-tint) !important;
         --ui-sidebar-surface-background: var(--hermes-skins-overlay-sidebar-tint) !important;
         --ui-editor-surface-background: var(--hermes-skins-overlay-tint) !important;
         background-color: var(--hermes-skins-overlay-tint) !important;
-        backdrop-filter: blur(20px) saturate(180%) !important;
-        -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+        backdrop-filter: var(--hermes-skins-overlay-frost) !important;
+        -webkit-backdrop-filter: var(--hermes-skins-overlay-frost) !important;
         box-shadow: 0 16px 40px rgba(0, 0, 0, 0.2), 0 0 0 1px color-mix(in srgb, var(--dt-border) 40%, transparent) !important;
       }
       /* Left sidebar in overlay cards: single layer translucency to avoid double-darkening */
@@ -1447,16 +1618,16 @@ class GlassController {
       /* Titlebar pill buttons (like Search) and opaque badges in overlays */
       :root[data-hermes-skins-active="true"] [data-overlay-surface] [data-glass-opaque] {
         background-color: color-mix(in srgb, var(--ui-bg-chrome) 60%, transparent) !important;
-        backdrop-filter: blur(8px) !important;
-        -webkit-backdrop-filter: blur(8px) !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
         border-color: color-mix(in srgb, var(--ui-stroke-secondary) 60%, transparent) !important;
       }
       /* Radix dialogs and floating dialog contents */
       :root[data-hermes-skins-active="true"] [role="dialog"]:not([data-overlay-surface]),
       :root[data-hermes-skins-active="true"] [data-slot="dialog-content"] {
         background-color: var(--hermes-skins-overlay-tint) !important;
-        backdrop-filter: blur(20px) !important;
-        -webkit-backdrop-filter: blur(20px) !important;
+        backdrop-filter: var(--hermes-skins-overlay-frost) !important;
+        -webkit-backdrop-filter: var(--hermes-skins-overlay-frost) !important;
       }
       /* Terminal surfaces resolve through --ui-terminal-surface-background: the
          fixed persistent host paints it inline and the xterm canvas paints the
@@ -1502,6 +1673,9 @@ class GlassController {
         -webkit-backdrop-filter: var(--hermes-skins-composer-frost);
       }
     `
+    if (this.styleEl.textContent !== css) this.styleEl.textContent = css
+    this.materialRule = this.styleEl.sheet?.cssRules?.[0]?.style || null
+    this.lastMaterialKey = materialKey
     this.syncTerminalRefitWatcher()
   }
 
@@ -1537,13 +1711,16 @@ class GlassController {
   queueRefitNudge() {
     if (this.refitQueued) return
     this.refitQueued = true
-    setTimeout(() => {
+    this.refitTimer = setTimeout(() => {
+      this.refitTimer = null
       this.refitQueued = false
       if (typeof window !== 'undefined') window.dispatchEvent(new Event('resize'))
     }, 150)
   }
 
   releaseRefitWatcher() {
+    if (this.refitTimer !== null) clearTimeout(this.refitTimer)
+    this.refitTimer = null
     this.refitObserver?.disconnect()
     this.refitObserver = null
     this.refitTargets.clear()
@@ -1578,6 +1755,8 @@ class RangeController {
     this.pending = new Set()
     this.queued = false
     this.active = false
+    this.frame = null
+    this.needsCleanup = false
     this.onInput = event => {
       if (event.target?.matches?.('input[type="range"]')) this.sync(event.target)
     }
@@ -1660,15 +1839,21 @@ class RangeController {
     if (typeof MutationObserver === 'function') {
       this.observer = new MutationObserver(records => {
         for (const record of records) {
-          if (record.type === 'attributes') this.pending.add(record.target)
+          if (record.type === 'attributes') {
+            // min/value/type changes on non-range host widgets need no work.
+            if (this.inputs.has(record.target) || record.target.matches?.('input[type="range"]')) this.pending.add(record.target)
+          }
           else {
-            for (const node of record.addedNodes) this.pending.add(node)
+            for (const node of record.addedNodes) {
+              // Token streams commonly add text nodes. They cannot own inputs.
+              if (node.nodeType === undefined || node.nodeType === 1) this.pending.add(node)
+            }
             // Restore and release removed inputs; a node moved within the
             // document stays connected and keeps its original saved value.
-            for (const node of record.removedNodes) this.pending.add(node)
+            if (record.removedNodes.length && this.inputs.size) this.needsCleanup = true
           }
         }
-        this.queueFlush()
+        if (this.pending.size || this.needsCleanup) this.queueFlush()
       })
       // Our own style writes are deliberately excluded: they cannot feed a loop.
       this.observer.observe(document.documentElement, {
@@ -1700,17 +1885,36 @@ class RangeController {
   queueFlush() {
     if (this.queued || !this.active) return
     this.queued = true
-    queueMicrotask(() => {
+    const flush = () => {
+      this.frame = null
       this.queued = false
       if (!this.active) return
+      const started = performance.now()
       for (const node of this.pending) {
-        if (node.isConnected) this.scan(node)
+        let covered = false
+        for (let parent = node.parentNode; parent; parent = parent.parentNode) {
+          if (this.pending.has(parent)) { covered = true; break }
+        }
+        if (covered || !node.isConnected) this.pending.delete(node)
       }
-      this.pending.clear()
-      for (const input of this.inputs.keys()) {
-        if (!input.isConnected || !input.matches('input[type="range"]')) this.restore(input)
+      for (const node of this.pending) {
+        this.scan(node)
+        this.pending.delete(node)
+        if (performance.now() - started > 4) break
       }
-    })
+      // Only tracked controls need cleanup. Never rescan the whole document.
+      if (this.needsCleanup || this.inputs.size) {
+        this.needsCleanup = false
+        for (const input of this.inputs.keys()) {
+          if (!input.isConnected || !input.matches('input[type="range"]')) this.restore(input)
+        }
+      }
+      if (this.pending.size) this.queueFlush()
+    }
+    // Yield to the host's chat rendering; a MutationObserver microtask must
+    // not scan DOM before every token has had a chance to paint.
+    if (typeof window !== 'undefined' && window.requestAnimationFrame) this.frame = window.requestAnimationFrame(flush)
+    else queueMicrotask(flush)
   }
 
   restore(input) {
@@ -1723,6 +1927,8 @@ class RangeController {
 
   destroy() {
     this.active = false
+    if (this.frame !== null) window.cancelAnimationFrame(this.frame)
+    this.frame = null
     this.observer?.disconnect()
     this.observer = null
     if (typeof document !== 'undefined') {
@@ -1908,11 +2114,30 @@ function createSkinStore(ctx) {
   const $config = atom(normalizeConfig(ctx.storage.get('config', {})))
   const $tryOnSkin = atom(null)
   const $tryOnBaseTheme = atom(null)
+  let saveTimer = null
+  let pendingSave = null
 
-  function saveConfig(updater) {
+  function flushPersistence() {
+    if (saveTimer !== null) clearTimeout(saveTimer)
+    saveTimer = null
+    if (pendingSave) {
+      ctx.storage.set('config', pendingSave)
+      pendingSave = null
+    }
+  }
+
+  function saveConfig(updater, { deferPersistence = false } = {}) {
     const prev = $config.get()
+    if (typeof updater !== 'function' && Object.entries(updater).every(([key, value]) => Object.is(prev[key], value))) {
+      if (!deferPersistence) flushPersistence()
+      return prev
+    }
     const next = normalizeConfig(typeof updater === 'function' ? updater(prev) : { ...prev, ...updater })
-    ctx.storage.set('config', next)
+    pendingSave = next
+    if (deferPersistence) {
+      if (saveTimer !== null) clearTimeout(saveTimer)
+      saveTimer = setTimeout(flushPersistence, 200)
+    } else flushPersistence()
     $config.set(next)
     return next
   }
@@ -1932,7 +2157,13 @@ function createSkinStore(ctx) {
     saveConfig(prev => ({ ...prev, customSkins: [skin, ...prev.customSkins] }))
   }
 
-  return { $config, $tryOnSkin, $tryOnBaseTheme, saveConfig, startTryOn, exitTryOn, addCustomSkin }
+  if (typeof window !== 'undefined') window.addEventListener('pagehide', flushPersistence)
+  function destroy() {
+    flushPersistence()
+    if (typeof window !== 'undefined') window.removeEventListener('pagehide', flushPersistence)
+  }
+  return { $config, $tryOnSkin, $tryOnBaseTheme, saveConfig, startTryOn, exitTryOn, addCustomSkin,
+    flushPersistence, destroy }
 }
 
 // ─── Submodule: Skin Controller ───────────────────────────────
@@ -1946,6 +2177,8 @@ class SkinController {
     this.lastTheme = null
     this.lastMode = 'dark'
     this.previewCleanup = null
+    this.pendingConfig = null
+    this.configFrame = null
     this.backdrop.onVisibilityChange = () => this.sync()
   }
 
@@ -1990,6 +2223,7 @@ class SkinController {
   }
 
   tryOn(skin, theme) {
+    this.flushConfig()
     this.store.startTryOn(skin, theme.themeName)
     this.previewCleanup = theme.clearThemePreview
     theme.previewTheme(skin.id, theme.renderedMode)
@@ -2004,6 +2238,7 @@ class SkinController {
   }
 
   apply(skin, theme) {
+    this.flushConfig()
     const previousTheme = this.findSkin(theme.themeName)
       ? this.store.$config.get().previousTheme
       : theme.themeName
@@ -2025,6 +2260,7 @@ class SkinController {
   }
 
   restore(theme) {
+    this.flushConfig()
     const previous = this.store.$config.get().previousTheme
     const target = previous && !this.findSkin(previous) ? previous : 'nous'
     this.store.saveConfig(prev => ({ ...prev, activeSkinId: 'default', wallpaperEnabled: Boolean(prev.wallpaperSource) }))
@@ -2036,11 +2272,41 @@ class SkinController {
   }
 
   changeConfig(change) {
+    this.flushConfig()
     this.store.saveConfig(change)
     this.sync()
   }
 
+  // Range input can arrive faster than the display. Apply only the newest
+  // values at the next paint; retain immediate commits for switches/imports.
+  scheduleConfig(change) {
+    this.pendingConfig = { ...this.pendingConfig, ...change }
+    if (this.configFrame !== null) return
+    this.configFrame = requestAnimationFrame(() => {
+      this.configFrame = null
+      const pending = this.pendingConfig
+      this.pendingConfig = null
+      if (pending) {
+        this.store.saveConfig(pending, { deferPersistence: true })
+        this.sync()
+      }
+    })
+  }
+
+  flushConfig() {
+    if (this.configFrame !== null) cancelAnimationFrame(this.configFrame)
+    this.configFrame = null
+    const pending = this.pendingConfig
+    this.pendingConfig = null
+    if (pending) {
+      this.store.saveConfig(pending)
+      this.sync()
+    }
+    this.store.flushPersistence?.()
+  }
+
   destroy() {
+    this.flushConfig()
     this.previewCleanup?.()
     this.previewCleanup = null
     this.backdrop.destroy()
@@ -2168,8 +2434,8 @@ async function mapLimit(items, limit, fn) {
   return results
 }
 
-async function readWallpaperProject(bridge, dir, source = 'manual') {
-  const entries = await entriesAt(bridge, dir)
+async function readWallpaperProject(bridge, dir, source = 'manual', knownEntries = null) {
+  const entries = knownEntries || await entriesAt(bridge, dir)
   if (!entries?.some(entry => entry.name.toLowerCase() === 'project.json')) return null
   const text = await textAt(bridge, joinLocalPath(dir, 'project.json'))
   if (!text) return null
@@ -2181,9 +2447,16 @@ async function readWallpaperProject(bridge, dir, source = 'manual') {
   const mainPath = safeProjectPath(dir, project.file)
   const candidatePreview = safeProjectPath(dir, project.preview)
   const previewPath = candidatePreview && IMAGE_EXTENSIONS.test(candidatePreview) ? candidatePreview : null
+  const filenames = new Set(entries.map(entry => entry.name.toLowerCase()))
+  const exists = async (path, relative) => {
+    if (!path) return false
+    // Most projects keep media beside project.json; its directory has already
+    // been read. Only nested paths require another native bridge round-trip.
+    if (!/[\\/]/.test(relative)) return filenames.has(relative.toLowerCase())
+    return existsAt(bridge, path)
+  }
   const [mainExists, previewExists] = await Promise.all([
-    mainPath ? existsAt(bridge, mainPath) : false,
-    previewPath ? existsAt(bridge, previewPath) : false
+    exists(mainPath, project.file), exists(previewPath, project.preview)
   ])
   const canPlayVideo = kind === 'video' && mainExists && VIDEO_EXTENSIONS.test(mainPath)
   const canShowImage = kind === 'image' && mainExists && IMAGE_EXTENSIONS.test(mainPath)
@@ -2211,7 +2484,7 @@ async function scanContainer(bridge, root, source) {
   const entries = await entriesAt(bridge, root)
   if (!entries) return []
   if (entries.some(entry => entry.name.toLowerCase() === 'project.json')) {
-    const project = await readWallpaperProject(bridge, root, source)
+    const project = await readWallpaperProject(bridge, root, source, entries)
     return project ? [project] : []
   }
   const dirs = entries.filter(entry => entry.isDirectory).slice(0, 1000)
@@ -2315,26 +2588,53 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
   'use strict';
 
   const canvas = document.getElementById('canvas');
-  const gl = canvas.getContext('webgl', { alpha: true, depth: true, antialias: true, premultipliedAlpha: false }) ||
-             canvas.getContext('experimental-webgl', { alpha: true, depth: true });
+  const contextOptions = { alpha: true, depth: true, antialias: false, premultipliedAlpha: false, powerPreference: 'low-power' };
+  const gl = canvas.getContext('webgl', contextOptions) || canvas.getContext('experimental-webgl', contextOptions);
   if (!gl) return;
+  const uniformCache = new WeakMap(), attribCache = new WeakMap();
+  function cachedLocation(cache, program, name, lookup) {
+    let locations = cache.get(program);
+    if (!locations) { locations = new Map(); cache.set(program, locations); }
+    if (!locations.has(name)) locations.set(name, lookup.call(gl, resolveProgram(program), name));
+    return locations.get(name);
+  }
+  function uniformLocation(program, name) { return cachedLocation(uniformCache, program, name, gl.getUniformLocation); }
+  function attribLocation(program, name) { return cachedLocation(attribCache, program, name, gl.getAttribLocation); }
+
 
   let sceneData = null;
   let isPaused = false;
   let contextLost = false;
+  let disposed = false;
+  let frameSerial = 0;
   let fitMode = 'cover';
   let startTime = performance.now();
   let lastTime = performance.now();
+  let pausedAt = null;
   let textureCache = new Map();
+  let textureBytes = 0;
+  const textureBudget = 128 * 1024 * 1024;
   let videoTextureCache = new Map();
   let activeParticles = [];
   let mouseX = 0.5, mouseY = 0.5;
   let curRotX = 0, curRotY = 0;
+  // Real cursor mirrored by the host: the backdrop iframe never receives
+  // input (pointer-events none), so the embedding page forwards normalized
+  // pointer positions via dsh-set-cursor. cursorActive clears when the
+  // pointer leaves the window; it gates the cursorHide fade and the xray
+  // reveal (parallax reuses mouseX/mouseY). Cursor-driven GPU water-ripple
+  // simulation was intentionally removed for resource efficiency.
+  let cursorX = 0.5, cursorY = 0.5, cursorActive = false;
+
 
   window.addEventListener('mousemove', (e) => {
     mouseX = e.clientX / window.innerWidth;
     mouseY = e.clientY / window.innerHeight;
+    cursorX = mouseX;
+    cursorY = mouseY;
+    cursorActive = true;
   });
+  window.addEventListener('mouseleave', () => { cursorActive = false; });
 
   // 3D Shaders
   const vs3D = \`
@@ -2707,6 +3007,80 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
     }
   \`;
 
+  // Fragment shader for the WE xray effect (cursor reveal): the blend
+  // texture replaces the layer around the pointer with a soft radial
+  // falloff, gated by the blend alpha and the multiply constant. The
+  // author's sprite asset is approximated analytically; u_cursorOn freezes
+  // the reveal while the pointer is outside the window.
+  const fsXray = [
+    'precision mediump float;',
+    'varying vec2 v_uv;',
+    'uniform sampler2D u_tex;',
+    'uniform sampler2D u_blend;',
+    'uniform float u_alpha;',
+    'uniform vec2 u_cursorUV;',
+    'uniform vec2 u_xrayAspect;',
+    'uniform float u_pointerScale;',
+    'uniform float u_multiply;',
+    'uniform float u_cursorOn;',
+    'void main() {',
+    '  vec4 base = texture2D(u_tex, v_uv);',
+    '  vec4 blendTex = texture2D(u_blend, v_uv);',
+    '  float d = distance((v_uv - u_cursorUV) * u_xrayAspect, vec2(0.0));',
+    '  float r = d * u_pointerScale;',
+    '  float f = exp(-r * r * 3.0) * u_cursorOn;',
+    '  float blend = clamp(blendTex.a * u_multiply, 0.0, 1.0) * f;',
+    '  vec3 rgb = mix(base.rgb, blendTex.rgb, blend);',
+    '  float a = mix(base.a, blendTex.a, blend) * u_alpha;',
+    '  gl_FragColor = vec4(rgb, a);',
+    '}',
+  ].join('\\n');
+
+  // Fragment shader for WE shake effect (eye blinking, breathing)
+  const fsShake = [
+    'precision mediump float;',
+    'varying vec2 v_uv;',
+    'uniform sampler2D u_tex;',
+    'uniform sampler2D u_flow;',
+    'uniform sampler2D u_mask;',
+    'uniform int u_hasMask;',
+    'uniform float u_time;',
+    'uniform float u_speed;',
+    'uniform float u_strength;',
+    'uniform vec2 u_friction;',
+    'uniform vec2 u_bounds;',
+    'uniform int u_direction;',
+    'uniform float u_alpha;',
+    'uniform float u_bright;',
+    'uniform float u_power;',
+    'const float M_PI_2 = 6.283185307179586;',
+    'void main() {',
+    '  vec2 flowColors = texture2D(u_flow, v_uv).rg;',
+    '  vec2 flowMask = (flowColors.rg - vec2(0.498, 0.498)) * 2.0;',
+    '  float time = u_speed * u_time;',
+    '  float offset = sin(mod(time, M_PI_2));',
+    '  offset = offset * 0.498 + 0.5;',
+    '  float base = step(0.0, cos(time));',
+    '  offset = mix(1.0 - pow(max(0.0, 1.0 - offset), u_friction.x), pow(max(0.0, offset), u_friction.y), base);',
+    '  offset = clamp((offset - u_bounds.x) * (1.0 / max(0.0001, u_bounds.y - u_bounds.x)), 0.0, 1.0);',
+    '  if (u_direction == 0) {',
+    '    offset = offset * 2.0 - 1.0;',
+    '  } else if (u_direction == 2) {',
+    '    offset = offset - 1.0;',
+    '  }',
+    '  vec2 texCoordOffset = offset * u_strength * u_strength * flowMask;',
+    '  vec4 color = texture2D(u_tex, v_uv + texCoordOffset);',
+    '  if (u_hasMask > 0) {',
+    '    float maskVal = texture2D(u_mask, v_uv + texCoordOffset).r;',
+    '    vec4 orig = texture2D(u_tex, v_uv);',
+    '    color = mix(orig, color, maskVal);',
+    '  }',
+    '  color.rgb = pow(color.rgb * u_bright, vec3(u_power));',
+    '  color.a *= u_alpha;',
+    '  gl_FragColor = color;',
+    '}',
+  ].join('\\n');
+
   // Fragment shader for water reflection
   const fsReflection = \`
     precision mediump float;
@@ -2722,6 +3096,7 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
     uniform float u_waterLine;
     // Reflection sample window: start + puddleDepth * span (legacy 0.42/0.38).
     uniform vec2 u_reflectRange;
+
     void main() {
       float mask = texture2D(u_mask, v_uv).r;
       vec2 sceneUv = u_rect.xy + v_uv * u_rect.zw;
@@ -2735,6 +3110,7 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
                    cos(v_uv.x * 90.0 + u_time * 1.9) * 0.0015;
       uvReflect.x += wave * mask;
       uvReflect.y += wave * mask;
+
       vec4 reflected = texture2D(u_fbo, clamp(uvReflect, 0.0, 1.0));
       reflected.rgb *= vec3(0.70, 0.75, 0.90);
       gl_FragColor = vec4(reflected.rgb, mask * u_alpha * 0.28);
@@ -2844,22 +3220,38 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
     return s;
   }
 
+  const shaderCache = new Map();
+  function sharedShader(type, src) {
+    const key = type + ':' + src;
+    if (!shaderCache.has(key)) shaderCache.set(key, createShader(type, src));
+    return shaderCache.get(key);
+  }
+  // Many wallpapers use only one or two of the eleven shader programs.
+  // Compile only the programs actually requested by a draw/location lookup.
   function createProgram(vsSrc, fsSrc) {
+    return { vsSrc, fsSrc, program: null };
+  }
+  function resolveProgram(record) {
+    if (record.program) return record.program;
     const p = gl.createProgram();
-    gl.attachShader(p, createShader(gl.VERTEX_SHADER, vsSrc));
-    gl.attachShader(p, createShader(gl.FRAGMENT_SHADER, fsSrc));
+    gl.attachShader(p, sharedShader(gl.VERTEX_SHADER, record.vsSrc));
+    gl.attachShader(p, sharedShader(gl.FRAGMENT_SHADER, record.fsSrc));
     gl.linkProgram(p);
     if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
       console.error('we-scene-player program link failed:', gl.getProgramInfoLog(p));
     }
+    record.program = p;
     return p;
   }
+  function useProgram(record) { gl.useProgram(resolveProgram(record)); }
 
   const progBasic = createProgram(vsBasic, fsBasic);
   const progReflection = createProgram(vsBasic, fsReflection);
   const progParticle = createProgram(vsBasic, fsParticle);
   const progFlow = createProgram(vsBasic, fsFlow);
   const progFlag = createProgram(vsBasic, fsFlag);
+  const progXray = createProgram(vsBasic, fsXray);
+  const progShake = createProgram(vsBasic, fsShake);
   const prog3D = createProgram(vs3D, fs3D);
 
   // Camera-facing 3D billboard (sun sprites, 3D particle streaks). The quad is
@@ -2990,21 +3382,21 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
   function drawNeonGrid(model, mesh, proj, view, elapsed) {
     const uc = mesh.userColors || {};
     const un = mesh.userNums || {};
-    gl.useProgram(progNeonGrid);
-    gl.uniformMatrix4fv(gl.getUniformLocation(progNeonGrid, 'u_proj'), false, proj);
-    gl.uniformMatrix4fv(gl.getUniformLocation(progNeonGrid, 'u_view'), false, view);
-    gl.uniformMatrix4fv(gl.getUniformLocation(progNeonGrid, 'u_model'), false, mat4Transform3D(model.origin, model.angles, model.scale));
-    gl.uniform1f(gl.getUniformLocation(progNeonGrid, 'u_time'), elapsed);
-    gl.uniform1f(gl.getUniformLocation(progNeonGrid, 'u_mountainScale'), un.mountainscale != null ? un.mountainscale : 1);
+    useProgram(progNeonGrid);
+    gl.uniformMatrix4fv(uniformLocation(progNeonGrid, 'u_proj'), false, proj);
+    gl.uniformMatrix4fv(uniformLocation(progNeonGrid, 'u_view'), false, view);
+    gl.uniformMatrix4fv(uniformLocation(progNeonGrid, 'u_model'), false, mat4Transform3D(model.origin, model.angles, model.scale));
+    gl.uniform1f(uniformLocation(progNeonGrid, 'u_time'), elapsed);
+    gl.uniform1f(uniformLocation(progNeonGrid, 'u_mountainScale'), un.mountainscale != null ? un.mountainscale : 1);
     const near = uc.gridnear || [1, 0, 0.2];
     const far = uc.gridfar || [0, 0, 1];
     const bgc = uc.gridbackground || [0.1, 0, 0.1];
-    gl.uniform3f(gl.getUniformLocation(progNeonGrid, 'u_gridNear'), near[0], near[1], near[2]);
-    gl.uniform3f(gl.getUniformLocation(progNeonGrid, 'u_gridFar'), far[0], far[1], far[2]);
-    gl.uniform3f(gl.getUniformLocation(progNeonGrid, 'u_gridBg'), bgc[0], bgc[1], bgc[2]);
+    gl.uniform3f(uniformLocation(progNeonGrid, 'u_gridNear'), near[0], near[1], near[2]);
+    gl.uniform3f(uniformLocation(progNeonGrid, 'u_gridFar'), far[0], far[1], far[2]);
+    gl.uniform3f(uniformLocation(progNeonGrid, 'u_gridBg'), bgc[0], bgc[1], bgc[2]);
     const gpu = getGpuMesh(mesh);
-    const gPos = gl.getAttribLocation(progNeonGrid, 'a_pos');
-    const gUv = gl.getAttribLocation(progNeonGrid, 'a_uv');
+    const gPos = attribLocation(progNeonGrid, 'a_pos');
+    const gUv = attribLocation(progNeonGrid, 'a_uv');
     gl.enableVertexAttribArray(gPos);
     gl.enableVertexAttribArray(gUv);
     gl.bindBuffer(gl.ARRAY_BUFFER, gpu.posBuf);
@@ -3055,33 +3447,33 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
   const progCloudsBg = createProgram(vsCloudsBg, fsCloudsBg);
 
   function drawCloudsBgLayer(layer, elapsed, width, height) {
-    gl.useProgram(progCloudsBg);
+    useProgram(progCloudsBg);
     gl.bindBuffer(gl.ARRAY_BUFFER, spriteBuf);
-    const cPos = gl.getAttribLocation(progCloudsBg, 'a_corner');
-    const cUv = gl.getAttribLocation(progCloudsBg, 'a_uv');
+    const cPos = attribLocation(progCloudsBg, 'a_corner');
+    const cUv = attribLocation(progCloudsBg, 'a_uv');
     gl.enableVertexAttribArray(cPos);
     gl.enableVertexAttribArray(cUv);
     gl.vertexAttribPointer(cPos, 2, gl.FLOAT, false, 16, 0);
     gl.vertexAttribPointer(cUv, 2, gl.FLOAT, false, 16, 8);
-    gl.uniform1f(gl.getUniformLocation(progCloudsBg, 'u_time'), elapsed);
-    gl.uniform1f(gl.getUniformLocation(progCloudsBg, 'u_aspect'), width / Math.max(height, 1));
+    gl.uniform1f(uniformLocation(progCloudsBg, 'u_time'), elapsed);
+    gl.uniform1f(uniformLocation(progCloudsBg, 'u_aspect'), width / Math.max(height, 1));
     const uc = layer.userColors || {};
     const c1 = uc.clouds || [0.05, 0.15, 0.4];
     const ch = uc.horizon || [0.05, 0.15, 0.4];
-    gl.uniform3f(gl.getUniformLocation(progCloudsBg, 'u_color1'), c1[0], c1[1], c1[2]);
-    gl.uniform3f(gl.getUniformLocation(progCloudsBg, 'u_colorHorizon'), ch[0], ch[1], ch[2]);
+    gl.uniform3f(uniformLocation(progCloudsBg, 'u_color1'), c1[0], c1[1], c1[2]);
+    gl.uniform3f(uniformLocation(progCloudsBg, 'u_colorHorizon'), ch[0], ch[1], ch[2]);
     if (layer.texUrl) {
       const texRec = loadTexture(layer.texUrl, true);
       if (texRec.loaded) {
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, texRec.texture);
-        gl.uniform1i(gl.getUniformLocation(progCloudsBg, 'u_tex'), 0);
-        gl.uniform1i(gl.getUniformLocation(progCloudsBg, 'u_hasTex'), 1);
+        gl.uniform1i(uniformLocation(progCloudsBg, 'u_tex'), 0);
+        gl.uniform1i(uniformLocation(progCloudsBg, 'u_hasTex'), 1);
       } else {
-        gl.uniform1i(gl.getUniformLocation(progCloudsBg, 'u_hasTex'), 0);
+        gl.uniform1i(uniformLocation(progCloudsBg, 'u_hasTex'), 0);
       }
     } else {
-      gl.uniform1i(gl.getUniformLocation(progCloudsBg, 'u_hasTex'), 0);
+      gl.uniform1i(uniformLocation(progCloudsBg, 'u_hasTex'), 0);
     }
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
@@ -3095,32 +3487,32 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
   ]), gl.STATIC_DRAW);
 
   function drawBillboard(center, axisX, axisY, texUrl, color, proj, view) {
-    gl.useProgram(progSprite);
-    gl.uniformMatrix4fv(gl.getUniformLocation(progSprite, 'u_proj'), false, proj);
-    gl.uniformMatrix4fv(gl.getUniformLocation(progSprite, 'u_view'), false, view);
+    useProgram(progSprite);
+    gl.uniformMatrix4fv(uniformLocation(progSprite, 'u_proj'), false, proj);
+    gl.uniformMatrix4fv(uniformLocation(progSprite, 'u_view'), false, view);
     gl.bindBuffer(gl.ARRAY_BUFFER, spriteBuf);
-    const cPos = gl.getAttribLocation(progSprite, 'a_corner');
-    const cUv = gl.getAttribLocation(progSprite, 'a_uv');
+    const cPos = attribLocation(progSprite, 'a_corner');
+    const cUv = attribLocation(progSprite, 'a_uv');
     gl.enableVertexAttribArray(cPos);
     gl.enableVertexAttribArray(cUv);
     gl.vertexAttribPointer(cPos, 2, gl.FLOAT, false, 16, 0);
     gl.vertexAttribPointer(cUv, 2, gl.FLOAT, false, 16, 8);
-    gl.uniform3f(gl.getUniformLocation(progSprite, 'u_center'), center[0], center[1], center[2]);
-    gl.uniform2f(gl.getUniformLocation(progSprite, 'u_axisX'), axisX[0], axisX[1]);
-    gl.uniform2f(gl.getUniformLocation(progSprite, 'u_axisY'), axisY[0], axisY[1]);
-    gl.uniform4f(gl.getUniformLocation(progSprite, 'u_color'), color[0], color[1], color[2], color[3]);
+    gl.uniform3f(uniformLocation(progSprite, 'u_center'), center[0], center[1], center[2]);
+    gl.uniform2f(uniformLocation(progSprite, 'u_axisX'), axisX[0], axisX[1]);
+    gl.uniform2f(uniformLocation(progSprite, 'u_axisY'), axisY[0], axisY[1]);
+    gl.uniform4f(uniformLocation(progSprite, 'u_color'), color[0], color[1], color[2], color[3]);
     if (texUrl) {
       const texRec = loadTexture(texUrl);
       if (texRec.loaded) {
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, texRec.texture);
-        gl.uniform1i(gl.getUniformLocation(progSprite, 'u_tex'), 0);
-        gl.uniform1i(gl.getUniformLocation(progSprite, 'u_hasTex'), 1);
+        gl.uniform1i(uniformLocation(progSprite, 'u_tex'), 0);
+        gl.uniform1i(uniformLocation(progSprite, 'u_hasTex'), 1);
       } else {
-        gl.uniform1i(gl.getUniformLocation(progSprite, 'u_hasTex'), 0);
+        gl.uniform1i(uniformLocation(progSprite, 'u_hasTex'), 0);
       }
     } else {
-      gl.uniform1i(gl.getUniformLocation(progSprite, 'u_hasTex'), 0);
+      gl.uniform1i(uniformLocation(progSprite, 'u_hasTex'), 0);
     }
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
@@ -3133,8 +3525,11 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
   }
   function updateParticles3d(sys, dt) {
     const st = getParticles3d(sys);
-    st.acc += sys.rate * dt;
-    while (st.acc >= 1 && st.list.length < sys.maxCount) {
+    const maxCount = Math.min(256, Math.max(0, Number(sys.maxCount) || 0));
+    const rate = Math.min(256, Math.max(0, Number(sys.rate) || 0));
+    // Do not accumulate missed spawns while full and release them in a burst.
+    st.acc = Math.min(maxCount, st.acc + rate * dt);
+    while (st.acc >= 1 && st.list.length < maxCount) {
       st.acc -= 1;
       // Random point on a sphere shell around the emitter origin.
       const th = Math.random() * Math.PI * 2;
@@ -3185,9 +3580,23 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.onload = () => {
+      if (disposed || contextLost) return;
+      // Bound decoded image residency as well as the canvas. A 4K multi-layer
+      // scene can otherwise allocate hundreds of MiB of GPU textures.
+      const maxSize = Math.min(Number(gl.getParameter(gl.MAX_TEXTURE_SIZE)) || 4096, 4096);
+      const scale = Math.min(1, maxSize / Math.max(img.width, img.height), Math.sqrt(4 * 1024 * 1024 / (img.width * img.height)));
+      const w = Math.max(1, Math.round(img.width * scale)), h = Math.max(1, Math.round(img.height * scale));
+      const bytes = w * h * 4;
+      if (textureBytes + bytes > textureBudget) { stopWithError(new Error('Scene image textures exceed 128 MiB')); return; }
+      let source = img;
+      if (scale < 1) {
+        source = document.createElement('canvas');
+        source.width = w; source.height = h;
+        source.getContext('2d').drawImage(img, 0, 0, w, h);
+      }
       gl.bindTexture(gl.TEXTURE_2D, tex);
       gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
       const wrap = repeat ? gl.REPEAT : gl.CLAMP_TO_EDGE;
@@ -3196,6 +3605,7 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
       record.loaded = true;
       record.width = img.width;
       record.height = img.height;
+      textureBytes += bytes;
     };
     img.src = url;
     return record;
@@ -3232,20 +3642,47 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
       video.muted = true;
       video.playsInline = true;
       video.preload = 'auto';
-      record = { texture, video, loaded: false };
+      record = { texture, video, loaded: false, enabled: false };
       video.addEventListener('loadeddata', () => { record.loaded = true; });
       videoTextureCache.set(layer.videoUrl, record);
+      if (typeof video.requestVideoFrameCallback === 'function') {
+        record.decodedFrame = 0;
+        const onFrame = (now, metadata) => {
+          record.videoFrameId = null;
+          if (disposed || contextLost) return;
+          record.decodedFrame = metadata.presentedFrames;
+          record.videoFrameId = video.requestVideoFrameCallback(onFrame);
+        };
+        record.videoFrameId = video.requestVideoFrameCallback(onFrame);
+      }
     }
-    if (enabled && !isPaused) { void record.video.play().catch(() => {}); }
-    else record.video.pause();
-    if (enabled && record.loaded && record.video.readyState >= 2) {
+    if (record.enabled !== enabled) {
+      record.enabled = enabled;
+      if (enabled && !isPaused) { void record.video.play().catch(() => {}); }
+      else record.video.pause();
+    }
+    // Shared video layers/passes upload each decoded frame only once.
+    const decodedFrame = record.decodedFrame ?? record.video.currentTime;
+    if (enabled && record.loaded && record.video.readyState >= 2 && record.uploadFrame !== frameSerial && record.uploadTime !== decodedFrame) {
       gl.bindTexture(gl.TEXTURE_2D, record.texture);
       gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, record.video);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      const width = record.video.videoWidth, height = record.video.videoHeight;
+      if (!record.bytes || record.width !== width || record.height !== height) {
+        const bytes = (width || 1) * (height || 1) * 4;
+        if (textureBytes - (record.bytes || 0) + bytes > textureBudget) throw new Error('Scene textures exceed 128 MiB');
+        textureBytes += bytes - (record.bytes || 0);
+        record.bytes = bytes;
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, record.video);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        record.width = width; record.height = height;
+      } else {
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, record.video);
+      }
+      record.uploadTime = decodedFrame;
+      record.uploadFrame = frameSerial;
     }
     return record;
   }
@@ -3495,11 +3932,12 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
     reflW = w; reflH = h;
   }
 
+  // Draws exactly one frame. The loop itself is owned by render(): an early
+  // version scheduled the next frame here AND in render(), which doubled the
+  // rAF chain every frame (2^n callbacks) and saturated the GPU.
   function renderFrame(now) {
-    if (!sceneData) {
-      requestAnimationFrame(render);
-      return;
-    }
+    if (!sceneData) return;
+    frameSerial += 1;
 
     const dt = Math.min((now - lastTime) / 1000, 0.1);
     lastTime = now;
@@ -3520,8 +3958,14 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
     // canvas is upscaled by the compositor and the wallpaper looks soft
     // (capped at 2x to bound GPU cost on very high DPR screens).
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const width = Math.max(1, Math.round(window.innerWidth * dpr));
-    const height = Math.max(1, Math.round(window.innerHeight * dpr));
+    let width = Math.max(1, Math.round(window.innerWidth * dpr));
+    let height = Math.max(1, Math.round(window.innerHeight * dpr));
+    const maxDim = 2560;
+    if (width > maxDim || height > maxDim) {
+      const s = maxDim / Math.max(width, height);
+      width = Math.max(1, Math.round(width * s));
+      height = Math.max(1, Math.round(height * s));
+    }
     if (canvas.width !== width || canvas.height !== height) {
       canvas.width = width;
       canvas.height = height;
@@ -3599,14 +4043,14 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
       // (Re-)bind prog3D with all scene uniforms. Must be re-invoked after any
       // pass that switches to another program (bgLayers, billboards).
       function bindProg3D(viewOverride) {
-        gl.useProgram(prog3D);
-        gl.uniformMatrix4fv(gl.getUniformLocation(prog3D, 'u_proj'), false, proj3D);
-        gl.uniformMatrix4fv(gl.getUniformLocation(prog3D, 'u_view'), false, viewOverride || view3D);
-        gl.uniform3f(gl.getUniformLocation(prog3D, 'u_cameraPos'), eye[0], eye[1], eye[2]);
-        gl.uniform1f(gl.getUniformLocation(prog3D, 'u_time'), elapsed);
+        useProgram(prog3D);
+        gl.uniformMatrix4fv(uniformLocation(prog3D, 'u_proj'), false, proj3D);
+        gl.uniformMatrix4fv(uniformLocation(prog3D, 'u_view'), false, viewOverride || view3D);
+        gl.uniform3f(uniformLocation(prog3D, 'u_cameraPos'), eye[0], eye[1], eye[2]);
+        gl.uniform1f(uniformLocation(prog3D, 'u_time'), elapsed);
         // WE-standard scene shading for generic scenes; car scenes keep their
         // dedicated paint/grid pipeline.
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_sceneStd'), isCarScene ? 0 : 1);
+        gl.uniform1i(uniformLocation(prog3D, 'u_sceneStd'), isCarScene ? 0 : 1);
         // Engine-glow boost positions: origins of jet models (ricepod.vert).
         const jetPos = [];
         for (const model of sceneData.models) {
@@ -3614,35 +4058,35 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
           const jetLike = mName.includes('jet') || (model.meshes || []).some((mm) => (mm.shader || '').toLowerCase().includes('jet'));
           if (jetLike && jetPos.length < 4) jetPos.push(model.origin || [0, 0, 0]);
         }
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_jetCount'), jetPos.length);
+        gl.uniform1i(uniformLocation(prog3D, 'u_jetCount'), jetPos.length);
         for (let ji = 0; ji < 4; ji++) {
           const jp = jetPos[ji] || [0, 0, 0];
-          gl.uniform3f(gl.getUniformLocation(prog3D, 'u_jetPos[' + ji + ']'), jp[0], jp[1], jp[2]);
+          gl.uniform3f(uniformLocation(prog3D, 'u_jetPos[' + ji + ']'), jp[0], jp[1], jp[2]);
         }
         const pointLights = sceneData.pointLights || [];
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_lightCount'), pointLights.length);
+        gl.uniform1i(uniformLocation(prog3D, 'u_lightCount'), pointLights.length);
         for (let li = 0; li < 4; li++) {
           const light = pointLights[li] || { origin: [0, 0, 0], color: [0, 0, 0], radius: 1 };
-          gl.uniform3f(gl.getUniformLocation(prog3D, 'u_lightPos[' + li + ']'), light.origin[0], light.origin[1], light.origin[2]);
-          gl.uniform4f(gl.getUniformLocation(prog3D, 'u_lightColorRadius[' + li + ']'), light.color[0], light.color[1], light.color[2], light.radius);
+          gl.uniform3f(uniformLocation(prog3D, 'u_lightPos[' + li + ']'), light.origin[0], light.origin[1], light.origin[2]);
+          gl.uniform4f(uniformLocation(prog3D, 'u_lightColorRadius[' + li + ']'), light.color[0], light.color[1], light.color[2], light.radius);
         }
         const sky = sceneData.skyLightColor || [0, 0, 0];
-        gl.uniform3f(gl.getUniformLocation(prog3D, 'u_skyLightColor'), sky[0], sky[1], sky[2]);
+        gl.uniform3f(uniformLocation(prog3D, 'u_skyLightColor'), sky[0], sky[1], sky[2]);
         // Ricepod uses lightDir (-0.577, 0.577, 0.577), car uses (0.577, 0.577, 0.577)
-        gl.uniform3f(gl.getUniformLocation(prog3D, 'u_lightDir'), isCarScene ? 0.577 : -0.577, 0.577, 0.577);
+        gl.uniform3f(uniformLocation(prog3D, 'u_lightDir'), isCarScene ? 0.577 : -0.577, 0.577, 0.577);
         const amb = sceneData.clearColor || [0.1, 0.1, 0.15];
         // Generic scenes must preserve authored black ambient. Artificially
         // lifting it illuminated distant geometry that WE intentionally hides.
         const ambColor = isCarScene ? amb : (sceneData.ambientColor || [0, 0, 0]);
-        gl.uniform3f(gl.getUniformLocation(prog3D, 'u_ambientColor'), ambColor[0], ambColor[1], ambColor[2]);
-        gl.uniform3f(gl.getUniformLocation(prog3D, 'u_paintColor'), bodyCol[0], bodyCol[1], bodyCol[2]);
+        gl.uniform3f(uniformLocation(prog3D, 'u_ambientColor'), ambColor[0], ambColor[1], ambColor[2]);
+        gl.uniform3f(uniformLocation(prog3D, 'u_paintColor'), bodyCol[0], bodyCol[1], bodyCol[2]);
       }
       bindProg3D();
 
-      const locPos = gl.getAttribLocation(prog3D, 'a_pos');
-      const locNorm = gl.getAttribLocation(prog3D, 'a_norm');
-      const locUv = gl.getAttribLocation(prog3D, 'a_uv');
-      const locUv2 = gl.getAttribLocation(prog3D, 'a_uv2');
+      const locPos = attribLocation(prog3D, 'a_pos');
+      const locNorm = attribLocation(prog3D, 'a_norm');
+      const locUv = attribLocation(prog3D, 'a_uv');
+      const locUv2 = attribLocation(prog3D, 'a_uv2');
       gl.enableVertexAttribArray(locPos);
       gl.enableVertexAttribArray(locNorm);
       gl.enableVertexAttribArray(locUv);
@@ -3699,9 +4143,9 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
         if (flags.skybox || flags.followEye) {
           modelMat = mat4Transform3D([eye[0], eye[1], eye[2]], model.angles, model.scale);
         }
-        gl.uniformMatrix4fv(gl.getUniformLocation(prog3D, 'u_model'), false, modelMat);
+        gl.uniformMatrix4fv(uniformLocation(prog3D, 'u_model'), false, modelMat);
         const normMat = mat3NormalMatrix(modelMat);
-        gl.uniformMatrix3fv(gl.getUniformLocation(prog3D, 'u_normMat'), false, normMat);
+        gl.uniformMatrix3fv(uniformLocation(prog3D, 'u_normMat'), false, normMat);
 
         const gpu = getGpuMesh(mesh);
         gl.bindBuffer(gl.ARRAY_BUFFER, gpu.posBuf);
@@ -3714,20 +4158,20 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
         gl.vertexAttribPointer(locUv2, 2, gl.FLOAT, false, 0, 0);
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gpu.idxBuf);
 
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_isDome'), flags.dome ? 1 : 0);
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_isShadow'), flags.shadow ? 1 : 0);
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_isGrid'), flags.grid ? 1 : 0);
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_isSkybox'), flags.skybox ? 1 : 0);
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_isSelfIllum'), flags.selfIllum ? 1 : 0);
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_isCarBody'), flags.body ? 1 : 0);
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_isGlass'), flags.glass ? 1 : 0);
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_isJet'), flags.jet ? 1 : 0);
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_isAurora'), flags.aurora ? 1 : 0);
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_isThunder'), flags.thunder ? 1 : 0);
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_isBg'), flags.bg ? 1 : 0);
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_isNeonSun'), flags.neonSun ? 1 : 0);
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_gradFade'), mesh.gradFade ? 1 : 0);
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_hasTint'), mesh.tint || flags.neonSun ? 1 : 0);
+        gl.uniform1i(uniformLocation(prog3D, 'u_isDome'), flags.dome ? 1 : 0);
+        gl.uniform1i(uniformLocation(prog3D, 'u_isShadow'), flags.shadow ? 1 : 0);
+        gl.uniform1i(uniformLocation(prog3D, 'u_isGrid'), flags.grid ? 1 : 0);
+        gl.uniform1i(uniformLocation(prog3D, 'u_isSkybox'), flags.skybox ? 1 : 0);
+        gl.uniform1i(uniformLocation(prog3D, 'u_isSelfIllum'), flags.selfIllum ? 1 : 0);
+        gl.uniform1i(uniformLocation(prog3D, 'u_isCarBody'), flags.body ? 1 : 0);
+        gl.uniform1i(uniformLocation(prog3D, 'u_isGlass'), flags.glass ? 1 : 0);
+        gl.uniform1i(uniformLocation(prog3D, 'u_isJet'), flags.jet ? 1 : 0);
+        gl.uniform1i(uniformLocation(prog3D, 'u_isAurora'), flags.aurora ? 1 : 0);
+        gl.uniform1i(uniformLocation(prog3D, 'u_isThunder'), flags.thunder ? 1 : 0);
+        gl.uniform1i(uniformLocation(prog3D, 'u_isBg'), flags.bg ? 1 : 0);
+        gl.uniform1i(uniformLocation(prog3D, 'u_isNeonSun'), flags.neonSun ? 1 : 0);
+        gl.uniform1i(uniformLocation(prog3D, 'u_gradFade'), mesh.gradFade ? 1 : 0);
+        gl.uniform1i(uniformLocation(prog3D, 'u_hasTint'), mesh.tint || flags.neonSun ? 1 : 0);
         const uc = mesh.userColors || {};
         let tintCol = mesh.tint || [1, 1, 1];
         let tint2Col = mesh.tint2 || tintCol;
@@ -3735,16 +4179,16 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
           tintCol = uc.colorsuntop || tintCol;
           tint2Col = uc.colorsunbottom || tint2Col;
         }
-        gl.uniform3f(gl.getUniformLocation(prog3D, 'u_tint'), tintCol[0], tintCol[1], tintCol[2]);
-        gl.uniform3f(gl.getUniformLocation(prog3D, 'u_tint2'), tint2Col[0], tint2Col[1], tint2Col[2]);
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_hasLightmap'), 0);
+        gl.uniform3f(uniformLocation(prog3D, 'u_tint'), tintCol[0], tintCol[1], tintCol[2]);
+        gl.uniform3f(uniformLocation(prog3D, 'u_tint2'), tint2Col[0], tint2Col[1], tint2Col[2]);
+        gl.uniform1i(uniformLocation(prog3D, 'u_hasLightmap'), 0);
         if (mesh.lightmapUrl) {
           const lightmapRec = loadTexture(mesh.lightmapUrl, false);
           if (lightmapRec.loaded) {
             gl.activeTexture(gl.TEXTURE2);
             gl.bindTexture(gl.TEXTURE_2D, lightmapRec.texture);
-            gl.uniform1i(gl.getUniformLocation(prog3D, 'u_lightmap'), 2);
-            gl.uniform1i(gl.getUniformLocation(prog3D, 'u_hasLightmap'), 1);
+            gl.uniform1i(uniformLocation(prog3D, 'u_lightmap'), 2);
+            gl.uniform1i(uniformLocation(prog3D, 'u_hasLightmap'), 1);
             gl.activeTexture(gl.TEXTURE0);
           }
         }
@@ -3754,7 +4198,7 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
           if (tex2Rec.loaded) {
             gl.activeTexture(gl.TEXTURE1);
             gl.bindTexture(gl.TEXTURE_2D, tex2Rec.texture);
-            gl.uniform1i(gl.getUniformLocation(prog3D, 'u_tex2'), 1);
+            gl.uniform1i(uniformLocation(prog3D, 'u_tex2'), 1);
             gl.activeTexture(gl.TEXTURE0);
           }
         }
@@ -3764,13 +4208,13 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
         if (mesh.noDepthWrite) gl.depthMask(false);
 
         const sp = getSpecParams(mesh.texUrl);
-        gl.uniform1f(gl.getUniformLocation(prog3D, 'u_specStrength'), sp[0]);
-        gl.uniform1f(gl.getUniformLocation(prog3D, 'u_specPower'), sp[1]);
+        gl.uniform1f(uniformLocation(prog3D, 'u_specStrength'), sp[0]);
+        gl.uniform1f(uniformLocation(prog3D, 'u_specPower'), sp[1]);
 
         if (flags.body) {
           const strCol = sceneData.carStripesColor || [0, 0, 0];
-          gl.uniform3f(gl.getUniformLocation(prog3D, 'u_paintColor'), bodyCol[0], bodyCol[1], bodyCol[2]);
-          gl.uniform3f(gl.getUniformLocation(prog3D, 'u_stripeColor'), strCol[0], strCol[1], strCol[2]);
+          gl.uniform3f(uniformLocation(prog3D, 'u_paintColor'), bodyCol[0], bodyCol[1], bodyCol[2]);
+          gl.uniform3f(uniformLocation(prog3D, 'u_stripeColor'), strCol[0], strCol[1], strCol[2]);
         }
 
         // Load texture for all meshes that have one (including skybox)
@@ -3779,15 +4223,15 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
           if (texRec.loaded) {
             gl.activeTexture(gl.TEXTURE0);
             gl.bindTexture(gl.TEXTURE_2D, texRec.texture);
-            gl.uniform1i(gl.getUniformLocation(prog3D, 'u_tex'), 0);
-            gl.uniform1i(gl.getUniformLocation(prog3D, 'u_hasTex'), 1);
+            gl.uniform1i(uniformLocation(prog3D, 'u_tex'), 0);
+            gl.uniform1i(uniformLocation(prog3D, 'u_hasTex'), 1);
           } else {
-            gl.uniform1i(gl.getUniformLocation(prog3D, 'u_hasTex'), 0);
-            gl.uniform3f(gl.getUniformLocation(prog3D, 'u_color'), 0.7, 0.7, 0.75);
+            gl.uniform1i(uniformLocation(prog3D, 'u_hasTex'), 0);
+            gl.uniform3f(uniformLocation(prog3D, 'u_color'), 0.7, 0.7, 0.75);
           }
         } else {
-          gl.uniform1i(gl.getUniformLocation(prog3D, 'u_hasTex'), 0);
-          gl.uniform3f(gl.getUniformLocation(prog3D, 'u_color'), 0.65, 0.68, 0.72);
+          gl.uniform1i(uniformLocation(prog3D, 'u_hasTex'), 0);
+          gl.uniform3f(uniformLocation(prog3D, 'u_color'), 0.65, 0.68, 0.72);
         }
 
         gl.drawElements(gl.TRIANGLES, gpu.iCount, gpu.idxType, 0);
@@ -3813,7 +4257,7 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
 
         // Dome to FBO
         gl.depthMask(false);
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_hasReflTex'), 0);
+        gl.uniform1i(uniformLocation(prog3D, 'u_hasReflTex'), 0);
         for (const model of domeModels) {
           for (const mesh of model.meshes) drawMesh(model, mesh, { dome: true });
         }
@@ -3852,7 +4296,7 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
 
       // 1. Skybox / Dome: render first, no depth write
       gl.depthMask(false);
-      gl.uniform1i(gl.getUniformLocation(prog3D, 'u_hasReflTex'), 0);
+      gl.uniform1i(uniformLocation(prog3D, 'u_hasReflTex'), 0);
       for (const model of skyboxModels) {
         for (const mesh of model.meshes) drawMesh(model, mesh, { skybox: true });
       }
@@ -3885,7 +4329,7 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
         for (const { model, mesh } of neonGridQueue) {
           drawNeonGrid(model, mesh, proj3D, view3D, elapsed);
         }
-        gl.useProgram(prog3D);
+        useProgram(prog3D);
         for (const { model, mesh } of translucentQueue) {
           drawMesh(model, mesh, { bg: (mesh.shader || '') === 'bg', neonSun: (mesh.shader || '') === 'neonsun' });
         }
@@ -3904,14 +4348,14 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
       if (hasGrid && reflTex) {
         gl.activeTexture(gl.TEXTURE1);
         gl.bindTexture(gl.TEXTURE_2D, reflTex);
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_reflTex'), 1);
-        gl.uniform1i(gl.getUniformLocation(prog3D, 'u_hasReflTex'), 1);
-        gl.uniform2f(gl.getUniformLocation(prog3D, 'u_resolution'), width, height);
+        gl.uniform1i(uniformLocation(prog3D, 'u_reflTex'), 1);
+        gl.uniform1i(uniformLocation(prog3D, 'u_hasReflTex'), 1);
+        gl.uniform2f(uniformLocation(prog3D, 'u_resolution'), width, height);
       }
       for (const model of gridModels) {
         for (const mesh of model.meshes) drawMesh(model, mesh, { grid: true });
       }
-      gl.uniform1i(gl.getUniformLocation(prog3D, 'u_hasReflTex'), 0);
+      gl.uniform1i(uniformLocation(prog3D, 'u_hasReflTex'), 0);
 
       // 5. Glass (blended)
       for (const { model, mesh } of glassQueue) {
@@ -3973,12 +4417,14 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
       gl.disable(gl.DEPTH_TEST);
       gl.disable(gl.CULL_FACE);
       gl.disable(gl.BLEND);
-      requestAnimationFrame(render);
       return;
     }
 
     const sceneW = sceneData.width || 3840;
     const sceneH = sceneData.height || 2160;
+    // Select layers before cursor updates and both render passes consume them.
+    const currentPeriod = activeTimePeriod(sceneData.timeSchedule, new Date());
+    const renderLayers = sceneData.layers.filter((layer) => layerEnabledByTime(layer, currentPeriod));
 
     let scale = 1;
     if (fitMode === 'cover') {
@@ -3992,7 +4438,40 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
     const vpX = fitMode === 'fill' ? 0 : Math.round((width - vpW) / 2);
     const vpY = fitMode === 'fill' ? 0 : Math.round((height - vpH) / 2);
 
-    ensureFbo(Math.min(sceneW, 2048), Math.min(sceneH, 1080));
+    // Mirrored cursor in scene px (y-up, matching layer coords). Cover/contain
+    // letterboxing is undone through the viewport rect; fill stretches 1:1.
+    let cursorSX = -1e9, cursorSY = -1e9;
+    if (cursorActive) {
+      if (fitMode === 'fill') {
+        cursorSX = cursorX * sceneW;
+        cursorSY = (1 - cursorY) * sceneH;
+      } else {
+        const dx = cursorX * width, dy = (1 - cursorY) * height;
+        cursorSX = (dx - vpX) / Math.max(vpW, 1) * sceneW;
+        cursorSY = (dy - vpY) / Math.max(vpH, 1) * sceneH;
+      }
+
+    }
+
+    // Hide-near-cursor (WE cursorEnter/leave visibility scripts, e.g. the
+    // butterfly that vanishes to reveal the art beneath): flagged layers
+    // fade out while the pointer is over their rect and fade back after it
+    // leaves. The factor is eased per frame and shared by both passes so the
+    // FBO reflection never shows a hidden layer.
+    for (const layer of renderLayers) {
+      let hideTarget = 0;
+      if (cursorActive && layer.cursorHide) {
+        const pad = Math.min(layer.w, layer.h) * 0.12 + 24;
+        if (Math.abs(cursorSX - layer.x) <= layer.w / 2 + pad &&
+            Math.abs(cursorSY - layer.y) <= layer.h / 2 + pad) hideTarget = 1;
+      }
+      const prevK = layer._cursorHideK || 0;
+      layer._cursorHideK = prevK + (hideTarget - prevK) * Math.min(1, dt * 7);
+    }
+    const hideAlpha = (layer) => (layer.alpha != null ? layer.alpha : 1.0) * (1 - 0.999 * (layer._cursorHideK || 0));
+
+    const needsReflection = renderLayers.some(layer => layer.isReflection);
+    if (needsReflection) ensureFbo(Math.min(sceneW, 2048), Math.min(sceneH, 1080));
 
     // Projection matrix mapping scene coords (0..sceneW, 0..sceneH) to clip space (-1..1)
     const proj = mat4Ortho(0, sceneW, 0, sceneH, -1000, 1000);
@@ -4001,62 +4480,65 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
     // overlays/effect layers follow it. Preserve that order. Reversing it makes
     // an opaque base layer cover flow/sway shaders and every foreground component,
     // which presents live scenes as a wrongly cropped static texture.
-    const currentPeriod = activeTimePeriod(sceneData.timeSchedule, new Date());
-    const renderLayers = sceneData.layers.filter((layer) => layerEnabledByTime(layer, currentPeriod));
     // Pause inactive time-period videos immediately; only the author-selected
     // morning/day/dusk/night layer may consume decode resources.
     for (const layer of sceneData.layers) {
       if (layer.videoUrl) loadVideoTexture(layer, layerEnabledByTime(layer, currentPeriod));
     }
 
-    // Pass 1: Render background and sky layers into FBO for reflections
-    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
-    gl.viewport(0, 0, fboWidth, fboHeight);
-    gl.clearColor(0, 0, 0, 0);
-    gl.clear(gl.COLOR_BUFFER_BIT);
+    const aPos = attribLocation(progBasic, 'a_pos');
+    const aUv = attribLocation(progBasic, 'a_uv');
+    // Ordinary wallpapers do not need a second full-scene render pass.
+    if (needsReflection) {
+      // Pass 1: Render background and sky layers into FBO for reflections
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      gl.viewport(0, 0, fboWidth, fboHeight);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
 
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
-    gl.useProgram(progBasic);
-    gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
-    const aPos = gl.getAttribLocation(progBasic, 'a_pos');
-    const aUv = gl.getAttribLocation(progBasic, 'a_uv');
-    gl.enableVertexAttribArray(aPos);
-    gl.enableVertexAttribArray(aUv);
-    gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 16, 0);
-    gl.vertexAttribPointer(aUv, 2, gl.FLOAT, false, 16, 8);
+      useProgram(progBasic);
+      gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+      gl.enableVertexAttribArray(aPos);
+      gl.enableVertexAttribArray(aUv);
+      gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 16, 0);
+      gl.vertexAttribPointer(aUv, 2, gl.FLOAT, false, 16, 8);
 
-    gl.uniformMatrix4fv(gl.getUniformLocation(progBasic, 'u_proj'), false, proj);
-    gl.uniform1f(gl.getUniformLocation(progBasic, 'u_time'), elapsed);
-    gl.uniform4f(gl.getUniformLocation(progBasic, 'u_uvRect'), 0, 0, 1, 1);
-    gl.uniform1f(gl.getUniformLocation(progBasic, 'u_bright'), 1);
-    gl.uniform1f(gl.getUniformLocation(progBasic, 'u_power'), 1);
+      gl.uniformMatrix4fv(uniformLocation(progBasic, 'u_proj'), false, proj);
+      gl.uniform1f(uniformLocation(progBasic, 'u_time'), elapsed);
+      gl.uniform4f(uniformLocation(progBasic, 'u_uvRect'), 0, 0, 1, 1);
+      gl.uniform1f(uniformLocation(progBasic, 'u_bright'), 1);
+      gl.uniform1f(uniformLocation(progBasic, 'u_power'), 1);
 
-    // Render sky & upper layers into FBO
-    for (const layer of renderLayers) {
-      if (layer.isGround || layer.isReflection) continue;
-      const texRec = layer.videoUrl ? loadVideoTexture(layer, true) : loadTexture(layer.texUrl);
-      if (!texRec.loaded) continue;
+      // Render sky & upper layers into FBO
+      for (const layer of renderLayers) {
+        if (layer.isGround || layer.isReflection) continue;
+        const texRec = layer.videoUrl ? loadVideoTexture(layer, true) : loadTexture(layer.texUrl);
+        if (!texRec.loaded) continue;
 
-      const model = mat4Transform2D(layer.x, layer.y, layer.w, layer.h, layer.angle || 0);
-      gl.uniformMatrix4fv(gl.getUniformLocation(progBasic, 'u_model'), false, model);
-      gl.uniform1f(gl.getUniformLocation(progBasic, 'u_alpha'), layer.alpha != null ? layer.alpha : 1.0);
-      gl.uniform3f(gl.getUniformLocation(progBasic, 'u_tint'), 1, 1, 1);
-      gl.uniform1f(gl.getUniformLocation(progBasic, 'u_sway'), layer.sway || 0);
-      gl.uniform1f(gl.getUniformLocation(progBasic, 'u_sway_speed'), layer.swaySpeed || 1.0);
+        const model = mat4Transform2D(layer.x, layer.y, layer.w, layer.h, layer.angle || 0);
+        gl.uniformMatrix4fv(uniformLocation(progBasic, 'u_model'), false, model);
+        gl.uniform1f(uniformLocation(progBasic, 'u_alpha'), hideAlpha(layer));
+        gl.uniform3f(uniformLocation(progBasic, 'u_tint'), 1, 1, 1);
+        gl.uniform1f(uniformLocation(progBasic, 'u_sway'), layer.sway || 0);
+        gl.uniform1f(uniformLocation(progBasic, 'u_sway_speed'), layer.swaySpeed || 1.0);
 
-      gl.activeTexture(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_2D, texRec.texture);
-      gl.uniform1i(gl.getUniformLocation(progBasic, 'u_tex'), 0);
-      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, texRec.texture);
+        gl.uniform1i(uniformLocation(progBasic, 'u_tex'), 0);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      }
+
     }
-
     // Pass 2: Render to screen viewport
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(vpX, vpY, vpW, vpH);
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
     // Render all layers (Sky -> Ground -> Reflection -> Particles)
     for (const layer of renderLayers) {
@@ -4065,10 +4547,10 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
         const maskRec = loadTexture(layer.texUrl);
         if (!maskRec.loaded) continue;
 
-        gl.useProgram(progReflection);
+        useProgram(progReflection);
         gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
-        const rPos = gl.getAttribLocation(progReflection, 'a_pos');
-        const rUv = gl.getAttribLocation(progReflection, 'a_uv');
+        const rPos = attribLocation(progReflection, 'a_pos');
+        const rUv = attribLocation(progReflection, 'a_uv');
         gl.enableVertexAttribArray(rPos);
         gl.enableVertexAttribArray(rUv);
         gl.vertexAttribPointer(rPos, 2, gl.FLOAT, false, 16, 0);
@@ -4077,32 +4559,33 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
         // Draw the reflection quad at the layer's own rect (fullscreen for
         // legacy scene-wide reflection layers).
         const model = mat4Transform2D(layer.x, layer.y, layer.w, layer.h, layer.angle || 0);
-        gl.uniformMatrix4fv(gl.getUniformLocation(progReflection, 'u_proj'), false, proj);
-        gl.uniformMatrix4fv(gl.getUniformLocation(progReflection, 'u_model'), false, model);
-        gl.uniform4f(gl.getUniformLocation(progReflection, 'u_uvRect'), 0, 0, 1, 1);
-        gl.uniform1f(gl.getUniformLocation(progReflection, 'u_time'), elapsed);
-        gl.uniform1f(gl.getUniformLocation(progReflection, 'u_alpha'), 0.85);
+        gl.uniformMatrix4fv(uniformLocation(progReflection, 'u_proj'), false, proj);
+        gl.uniformMatrix4fv(uniformLocation(progReflection, 'u_model'), false, model);
+        gl.uniform4f(uniformLocation(progReflection, 'u_uvRect'), 0, 0, 1, 1);
+        gl.uniform1f(uniformLocation(progReflection, 'u_time'), elapsed);
+        gl.uniform1f(uniformLocation(progReflection, 'u_alpha'), 0.85);
 
         // Scene-uv rect of the quad (scene v grows downward, 0 at the top).
         const rectLeftU = (layer.x - layer.w / 2) / sceneW;
         const rectTopV = 1 - (layer.y + layer.h / 2) / sceneH;
-        gl.uniform4f(gl.getUniformLocation(progReflection, 'u_rect'),
+        gl.uniform4f(uniformLocation(progReflection, 'u_rect'),
           rectLeftU, rectTopV, layer.w / sceneW, layer.h / sceneH);
         // Water line follows the scene data when the parser resolved one;
         // otherwise keep the legacy 0.65 / 0.42 / 0.38 window.
         const waterLine = typeof layer.waterLine === 'number' ? layer.waterLine : 0.65;
         const depthScale = (1 - waterLine) / 0.35;
-        gl.uniform1f(gl.getUniformLocation(progReflection, 'u_waterLine'), waterLine);
-        gl.uniform2f(gl.getUniformLocation(progReflection, 'u_reflectRange'),
+        gl.uniform1f(uniformLocation(progReflection, 'u_waterLine'), waterLine);
+        gl.uniform2f(uniformLocation(progReflection, 'u_reflectRange'),
           waterLine - 0.23 * depthScale, 0.38 * depthScale);
+
 
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, fboTex);
-        gl.uniform1i(gl.getUniformLocation(progReflection, 'u_fbo'), 0);
+        gl.uniform1i(uniformLocation(progReflection, 'u_fbo'), 0);
 
         gl.activeTexture(gl.TEXTURE1);
         gl.bindTexture(gl.TEXTURE_2D, maskRec.texture);
-        gl.uniform1i(gl.getUniformLocation(progReflection, 'u_mask'), 1);
+        gl.uniform1i(uniformLocation(progReflection, 'u_mask'), 1);
 
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -4116,30 +4599,30 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
       if (layer.shader === 'flowimage' && layer.texUrls && layer.texUrls.length >= 4) {
         const recs = layer.texUrls.slice(0, 4).map((u) => loadTexture(u));
         if (!recs.every((r) => r.loaded)) continue;
-        gl.useProgram(progFlow);
+        useProgram(progFlow);
         gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
-        const fPos = gl.getAttribLocation(progFlow, 'a_pos');
-        const fUv = gl.getAttribLocation(progFlow, 'a_uv');
+        const fPos = attribLocation(progFlow, 'a_pos');
+        const fUv = attribLocation(progFlow, 'a_uv');
         gl.enableVertexAttribArray(fPos);
         gl.enableVertexAttribArray(fUv);
         gl.vertexAttribPointer(fPos, 2, gl.FLOAT, false, 16, 0);
         gl.vertexAttribPointer(fUv, 2, gl.FLOAT, false, 16, 8);
         const model = mat4Transform2D(layer.x, layer.y, layer.w, layer.h, layer.angle || 0);
-        gl.uniformMatrix4fv(gl.getUniformLocation(progFlow, 'u_proj'), false, proj);
-        gl.uniformMatrix4fv(gl.getUniformLocation(progFlow, 'u_model'), false, model);
+        gl.uniformMatrix4fv(uniformLocation(progFlow, 'u_proj'), false, proj);
+        gl.uniformMatrix4fv(uniformLocation(progFlow, 'u_model'), false, model);
         const fcrop = layer.uvCrop || [0, 0, 1, 1];
-        gl.uniform4f(gl.getUniformLocation(progFlow, 'u_uvRect'), fcrop[0], fcrop[1], fcrop[2], fcrop[3]);
-        gl.uniform1f(gl.getUniformLocation(progFlow, 'u_time'), elapsed);
+        gl.uniform4f(uniformLocation(progFlow, 'u_uvRect'), fcrop[0], fcrop[1], fcrop[2], fcrop[3]);
+        gl.uniform1f(uniformLocation(progFlow, 'u_time'), elapsed);
         const nums = layer.nums || {};
-        gl.uniform3f(gl.getUniformLocation(progFlow, 'u_speeds'),
+        gl.uniform3f(uniformLocation(progFlow, 'u_speeds'),
           nums.Speed0 ?? 0.01, nums.Speed1 ?? 0.01, nums.Speed2 ?? 0.01);
-        gl.uniform1f(gl.getUniformLocation(progFlow, 'u_amp'), nums.Amount ?? 1);
-        gl.uniform1f(gl.getUniformLocation(progFlow, 'u_bright'), nums.Bright ?? 1);
+        gl.uniform1f(uniformLocation(progFlow, 'u_amp'), nums.Amount ?? 1);
+        gl.uniform1f(uniformLocation(progFlow, 'u_bright'), nums.Bright ?? 1);
         const units = ['u_mask', 'u_l1', 'u_l2', 'u_l3'];
         for (let ui = 0; ui < 4; ui++) {
           gl.activeTexture(gl.TEXTURE0 + ui);
           gl.bindTexture(gl.TEXTURE_2D, recs[ui].texture);
-          gl.uniform1i(gl.getUniformLocation(progFlow, units[ui]), ui);
+          gl.uniform1i(uniformLocation(progFlow, units[ui]), ui);
         }
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -4151,35 +4634,35 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
       if (layer.shader === 'flag' && layer.texUrls && layer.texUrls.length >= 3) {
         const recs = layer.texUrls.slice(0, 3).map((u) => loadTexture(u, true));
         if (!recs.every((r) => r.loaded)) continue;
-        gl.useProgram(progFlag);
+        useProgram(progFlag);
         gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
-        const flPos = gl.getAttribLocation(progFlag, 'a_pos');
-        const flUv = gl.getAttribLocation(progFlag, 'a_uv');
+        const flPos = attribLocation(progFlag, 'a_pos');
+        const flUv = attribLocation(progFlag, 'a_uv');
         gl.enableVertexAttribArray(flPos);
         gl.enableVertexAttribArray(flUv);
         gl.vertexAttribPointer(flPos, 2, gl.FLOAT, false, 16, 0);
         gl.vertexAttribPointer(flUv, 2, gl.FLOAT, false, 16, 8);
         const model = mat4Transform2D(layer.x, layer.y, layer.w, layer.h, layer.angle || 0);
-        gl.uniformMatrix4fv(gl.getUniformLocation(progFlag, 'u_proj'), false, proj);
-        gl.uniformMatrix4fv(gl.getUniformLocation(progFlag, 'u_model'), false, model);
+        gl.uniformMatrix4fv(uniformLocation(progFlag, 'u_proj'), false, proj);
+        gl.uniformMatrix4fv(uniformLocation(progFlag, 'u_model'), false, model);
         const flcrop = layer.uvCrop || [0, 0, 1, 1];
-        gl.uniform4f(gl.getUniformLocation(progFlag, 'u_uvRect'), flcrop[0], flcrop[1], flcrop[2], flcrop[3]);
-        gl.uniform1f(gl.getUniformLocation(progFlag, 'u_time'), elapsed);
+        gl.uniform4f(uniformLocation(progFlag, 'u_uvRect'), flcrop[0], flcrop[1], flcrop[2], flcrop[3]);
+        gl.uniform1f(uniformLocation(progFlag, 'u_time'), elapsed);
         const fnums = layer.nums || {};
-        gl.uniform1f(gl.getUniformLocation(progFlag, 'u_speed'), fnums.Speed ?? 0.4);
-        gl.uniform1f(gl.getUniformLocation(progFlag, 'u_strength'), fnums.Strength ?? 0.5);
+        gl.uniform1f(uniformLocation(progFlag, 'u_speed'), fnums.Speed ?? 0.4);
+        gl.uniform1f(uniformLocation(progFlag, 'u_strength'), fnums.Strength ?? 0.5);
         const fcols = layer.userColors || {};
         const fc1 = fcols.color1 || [0, 0, 0];
         const fc2 = fcols.color2 || [0, 0, 0];
         const fc3 = fcols.color3 || [1, 1, 1];
-        gl.uniform3f(gl.getUniformLocation(progFlag, 'u_color1'), fc1[0], fc1[1], fc1[2]);
-        gl.uniform3f(gl.getUniformLocation(progFlag, 'u_color2'), fc2[0], fc2[1], fc2[2]);
-        gl.uniform3f(gl.getUniformLocation(progFlag, 'u_color3'), fc3[0], fc3[1], fc3[2]);
+        gl.uniform3f(uniformLocation(progFlag, 'u_color1'), fc1[0], fc1[1], fc1[2]);
+        gl.uniform3f(uniformLocation(progFlag, 'u_color2'), fc2[0], fc2[1], fc2[2]);
+        gl.uniform3f(uniformLocation(progFlag, 'u_color3'), fc3[0], fc3[1], fc3[2]);
         const funits = ['u_tex', 'u_normal', 'u_cloth'];
         for (let ui = 0; ui < 3; ui++) {
           gl.activeTexture(gl.TEXTURE0 + ui);
           gl.bindTexture(gl.TEXTURE_2D, recs[ui].texture);
-          gl.uniform1i(gl.getUniformLocation(progFlag, funits[ui]), ui);
+          gl.uniform1i(uniformLocation(progFlag, funits[ui]), ui);
         }
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -4187,48 +4670,152 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
         continue;
       }
 
+      // WE xray layer (cursor reveal, e.g. the butterfly that vanishes to
+      // show the art beneath): the blend texture replaces the base around
+      // the pointer. Without a resolved blend texture the layer falls
+      // through to the standard branch below.
+      if (layer.xrayBlendUrl) {
+        const baseRec = layer.videoUrl ? loadVideoTexture(layer, true) : loadTexture(layer.texUrl);
+        const blendRec = loadTexture(layer.xrayBlendUrl);
+        if (baseRec.loaded && blendRec.loaded) {
+          useProgram(progXray);
+          gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+          const xPos = attribLocation(progXray, 'a_pos');
+          const xUv = attribLocation(progXray, 'a_uv');
+          gl.enableVertexAttribArray(xPos);
+          gl.enableVertexAttribArray(xUv);
+          gl.vertexAttribPointer(xPos, 2, gl.FLOAT, false, 16, 0);
+          gl.vertexAttribPointer(xUv, 2, gl.FLOAT, false, 16, 8);
+          const xModel = mat4Transform2D(layer.x, layer.y, layer.w, layer.h, layer.angle || 0);
+          gl.uniformMatrix4fv(uniformLocation(progXray, 'u_proj'), false, proj);
+          gl.uniformMatrix4fv(uniformLocation(progXray, 'u_model'), false, xModel);
+          const xcrop = layer.uvCrop || [0, 0, 1, 1];
+          gl.uniform4f(uniformLocation(progXray, 'u_uvRect'), xcrop[0], xcrop[1], xcrop[2], xcrop[3]);
+          gl.uniform1f(uniformLocation(progXray, 'u_alpha'), hideAlpha(layer));
+          gl.uniform2f(uniformLocation(progXray, 'u_cursorUV'),
+            (cursorSX - (layer.x - layer.w / 2)) / layer.w,
+            ((layer.y + layer.h / 2) - cursorSY) / layer.h);
+          gl.uniform2f(uniformLocation(progXray, 'u_xrayAspect'), layer.w / Math.max(layer.h, 1), 1);
+          gl.uniform1f(uniformLocation(progXray, 'u_pointerScale'),
+            1 / Math.max(layer.xraySize || 0.2, 0.02));
+          gl.uniform1f(uniformLocation(progXray, 'u_multiply'), layer.xrayMultiply ?? 1);
+          gl.uniform1f(uniformLocation(progXray, 'u_cursorOn'), cursorActive ? 1 : 0);
+          gl.activeTexture(gl.TEXTURE0);
+          gl.bindTexture(gl.TEXTURE_2D, baseRec.texture);
+          gl.uniform1i(uniformLocation(progXray, 'u_tex'), 0);
+          gl.activeTexture(gl.TEXTURE1);
+          gl.bindTexture(gl.TEXTURE_2D, blendRec.texture);
+          gl.uniform1i(uniformLocation(progXray, 'u_blend'), 1);
+          gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+          gl.activeTexture(gl.TEXTURE0);
+          continue;
+        }
+      }
+
+      // WE shake effect (e.g. eye blinking, breathing UV deformation)
+      if (layer.shakeEffect) {
+        const shake = layer.shakeEffect;
+        const baseRec = layer.videoUrl ? loadVideoTexture(layer, true) : loadTexture(layer.texUrl);
+        const flowRec = shake.flowMaskUrl ? loadTexture(shake.flowMaskUrl) : null;
+        const maskRec = shake.opacityMaskUrl ? loadTexture(shake.opacityMaskUrl) : null;
+        if (baseRec.loaded && (!flowRec || flowRec.loaded) && (!maskRec || maskRec.loaded)) {
+          gl.enable(gl.BLEND);
+          gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+          useProgram(progShake);
+          gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+          const sPos = attribLocation(progShake, 'a_pos');
+          const sUv = attribLocation(progShake, 'a_uv');
+          gl.enableVertexAttribArray(sPos);
+          gl.enableVertexAttribArray(sUv);
+          gl.vertexAttribPointer(sPos, 2, gl.FLOAT, false, 16, 0);
+          gl.vertexAttribPointer(sUv, 2, gl.FLOAT, false, 16, 8);
+          const sModel = mat4Transform2D(layer.x, layer.y, layer.w, layer.h, layer.angle || 0);
+          gl.uniformMatrix4fv(uniformLocation(progShake, 'u_proj'), false, proj);
+          gl.uniformMatrix4fv(uniformLocation(progShake, 'u_model'), false, sModel);
+          const scrop = layer.uvCrop || [0, 0, 1, 1];
+          gl.uniform4f(uniformLocation(progShake, 'u_uvRect'), scrop[0], scrop[1], scrop[2], scrop[3]);
+          gl.uniform1f(uniformLocation(progShake, 'u_time'), elapsed);
+          gl.uniform1f(uniformLocation(progShake, 'u_speed'), shake.speed || 1.0);
+          gl.uniform1f(uniformLocation(progShake, 'u_strength'), shake.strength || 0.1);
+          gl.uniform2f(uniformLocation(progShake, 'u_friction'), shake.friction[0], shake.friction[1]);
+          gl.uniform2f(uniformLocation(progShake, 'u_bounds'), shake.bounds[0], shake.bounds[1]);
+          gl.uniform1i(uniformLocation(progShake, 'u_direction'), shake.direction || 0);
+          gl.uniform1f(uniformLocation(progShake, 'u_alpha'), hideAlpha(layer));
+          const lnums = layer.nums || {};
+          gl.uniform1f(uniformLocation(progShake, 'u_bright'), lnums.Bright ?? 1);
+          gl.uniform1f(uniformLocation(progShake, 'u_power'), lnums.Power ?? 1);
+
+          gl.activeTexture(gl.TEXTURE0);
+          gl.bindTexture(gl.TEXTURE_2D, baseRec.texture);
+          gl.uniform1i(uniformLocation(progShake, 'u_tex'), 0);
+
+          if (flowRec) {
+            gl.activeTexture(gl.TEXTURE1);
+            gl.bindTexture(gl.TEXTURE_2D, flowRec.texture);
+            gl.uniform1i(uniformLocation(progShake, 'u_flow'), 1);
+          }
+          if (maskRec) {
+            gl.activeTexture(gl.TEXTURE2);
+            gl.bindTexture(gl.TEXTURE_2D, maskRec.texture);
+            gl.uniform1i(uniformLocation(progShake, 'u_mask'), 2);
+            gl.uniform1i(uniformLocation(progShake, 'u_hasMask'), 1);
+          } else {
+            gl.uniform1i(uniformLocation(progShake, 'u_hasMask'), 0);
+          }
+          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+          gl.activeTexture(gl.TEXTURE0);
+          continue;
+        }
+      }
+
       // Standard image or embedded-video layer.
       const texRec = layer.videoUrl ? loadVideoTexture(layer, true) : loadTexture(layer.texUrl);
       if (!texRec.loaded) continue;
 
-      gl.useProgram(progBasic);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      useProgram(progBasic);
       gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+      gl.enableVertexAttribArray(aPos);
+      gl.enableVertexAttribArray(aUv);
       gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 16, 0);
       gl.vertexAttribPointer(aUv, 2, gl.FLOAT, false, 16, 8);
 
       const crop = layer.uvCrop || [0, 0, 1, 1];
-      gl.uniform4f(gl.getUniformLocation(progBasic, 'u_uvRect'), crop[0], crop[1], crop[2], crop[3]);
+      gl.uniform4f(uniformLocation(progBasic, 'u_uvRect'), crop[0], crop[1], crop[2], crop[3]);
       const lnums = layer.nums || {};
-      gl.uniform1f(gl.getUniformLocation(progBasic, 'u_bright'), lnums.Bright ?? 1);
-      gl.uniform1f(gl.getUniformLocation(progBasic, 'u_power'), lnums.Power ?? 1);
+      gl.uniform1f(uniformLocation(progBasic, 'u_bright'), lnums.Bright ?? 1);
+      gl.uniform1f(uniformLocation(progBasic, 'u_power'), lnums.Power ?? 1);
 
       const model = mat4Transform2D(layer.x, layer.y, layer.w, layer.h, layer.angle || 0);
-      gl.uniformMatrix4fv(gl.getUniformLocation(progBasic, 'u_proj'), false, proj);
-      gl.uniformMatrix4fv(gl.getUniformLocation(progBasic, 'u_model'), false, model);
-      gl.uniform1f(gl.getUniformLocation(progBasic, 'u_time'), elapsed);
-      gl.uniform1f(gl.getUniformLocation(progBasic, 'u_alpha'), layer.alpha != null ? layer.alpha : 1.0);
-      gl.uniform3f(gl.getUniformLocation(progBasic, 'u_tint'), 1, 1, 1);
-      gl.uniform1f(gl.getUniformLocation(progBasic, 'u_sway'), layer.sway || 0);
-      gl.uniform1f(gl.getUniformLocation(progBasic, 'u_sway_speed'), layer.swaySpeed || 1.0);
+      gl.uniformMatrix4fv(uniformLocation(progBasic, 'u_proj'), false, proj);
+      gl.uniformMatrix4fv(uniformLocation(progBasic, 'u_model'), false, model);
+      gl.uniform1f(uniformLocation(progBasic, 'u_time'), elapsed);
+      gl.uniform1f(uniformLocation(progBasic, 'u_alpha'), hideAlpha(layer));
+      gl.uniform3f(uniformLocation(progBasic, 'u_tint'), 1, 1, 1);
+
+      gl.uniform1f(uniformLocation(progBasic, 'u_sway'), layer.sway || 0);
+      gl.uniform1f(uniformLocation(progBasic, 'u_sway_speed'), layer.swaySpeed || 1.0);
 
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, texRec.texture);
-      gl.uniform1i(gl.getUniformLocation(progBasic, 'u_tex'), 0);
+      gl.uniform1i(uniformLocation(progBasic, 'u_tex'), 0);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     }
 
     // Render Particles (Shooting Stars, Fireflies)
     if (activeParticles.length > 0) {
-      gl.useProgram(progParticle);
+      useProgram(progParticle);
       gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
-      const pPos = gl.getAttribLocation(progParticle, 'a_pos');
-      const pUv = gl.getAttribLocation(progParticle, 'a_uv');
+      const pPos = attribLocation(progParticle, 'a_pos');
+      const pUv = attribLocation(progParticle, 'a_uv');
       gl.enableVertexAttribArray(pPos);
       gl.enableVertexAttribArray(pUv);
       gl.vertexAttribPointer(pPos, 2, gl.FLOAT, false, 16, 0);
       gl.vertexAttribPointer(pUv, 2, gl.FLOAT, false, 16, 8);
-      gl.uniformMatrix4fv(gl.getUniformLocation(progParticle, 'u_proj'), false, proj);
-      gl.uniform4f(gl.getUniformLocation(progParticle, 'u_uvRect'), 0, 0, 1, 1);
+      gl.uniformMatrix4fv(uniformLocation(progParticle, 'u_proj'), false, proj);
+      gl.uniform4f(uniformLocation(progParticle, 'u_uvRect'), 0, 0, 1, 1);
 
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE); // Additive luminous particles
 
@@ -4239,7 +4826,7 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
         if (texRec && texRec.loaded) {
           gl.activeTexture(gl.TEXTURE0);
           gl.bindTexture(gl.TEXTURE_2D, texRec.texture);
-          gl.uniform1i(gl.getUniformLocation(progParticle, 'u_tex'), 0);
+          gl.uniform1i(uniformLocation(progParticle, 'u_tex'), 0);
         }
 
         // Draw trail if meteor
@@ -4249,40 +4836,80 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
             const tRatio = (ti + 1) / p.trail.length;
             const tAlpha = alpha * tRatio * 0.6;
             const tModel = mat4Transform2D(tp.x, tp.y, p.size * tRatio * 1.5, p.size * 0.4, Math.atan2(p.vy, p.vx));
-            gl.uniformMatrix4fv(gl.getUniformLocation(progParticle, 'u_model'), false, tModel);
-            gl.uniform4f(gl.getUniformLocation(progParticle, 'u_color'), p.color[0], p.color[1], p.color[2], tAlpha);
+            gl.uniformMatrix4fv(uniformLocation(progParticle, 'u_model'), false, tModel);
+            gl.uniform4f(uniformLocation(progParticle, 'u_color'), p.color[0], p.color[1], p.color[2], tAlpha);
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
           }
         }
 
         const model = mat4Transform2D(p.x, p.y, p.size * (p.system.type === 'meteor' ? 3 : 1), p.size, Math.atan2(p.vy, p.vx));
-        gl.uniformMatrix4fv(gl.getUniformLocation(progParticle, 'u_model'), false, model);
-        gl.uniform4f(gl.getUniformLocation(progParticle, 'u_color'), p.color[0], p.color[1], p.color[2], alpha * p.color[3]);
+        gl.uniformMatrix4fv(uniformLocation(progParticle, 'u_model'), false, model);
+        gl.uniform4f(uniformLocation(progParticle, 'u_color'), p.color[0], p.color[1], p.color[2], alpha * p.color[3]);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       }
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     }
-
-    requestAnimationFrame(render);
   }
 
-  // Crash guard: a render exception must not freeze the wallpaper silently.
+  // One scheduler owns both handles. Cap wallpaper work at 30 FPS even on
+  // 144/240 Hz displays, and never poll while waiting, paused or context-lost.
+  const frameInterval = 1000 / 30;
+  let rafId = null, timerId = null, nextFrameAt = 0;
+  function cancelRender() {
+    if (rafId !== null) cancelAnimationFrame(rafId);
+    if (timerId !== null) clearTimeout(timerId);
+    rafId = timerId = null;
+  }
+  function scheduleRender() {
+    if (disposed || isPaused || contextLost || !sceneData || rafId !== null || timerId !== null) return;
+    const delay = nextFrameAt - performance.now();
+    if (delay > 0) {
+      timerId = setTimeout(() => { timerId = null; scheduleRender(); }, delay);
+    } else {
+      rafId = requestAnimationFrame(render);
+    }
+  }
+  function stopWithError(error) {
+    console.error('we-scene-player render error:', error && error.stack || String(error));
+    dispose();
+    window.parent.postMessage({ type: 'dsh-scene-failed' }, '*');
+  }
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    cancelRender();
+    for (const rec of videoTextureCache.values()) {
+      if (rec.videoFrameId != null) rec.video.cancelVideoFrameCallback?.(rec.videoFrameId);
+      rec.video.pause();
+      rec.video.removeAttribute('src');
+      rec.video.load();
+    }
+    videoTextureCache.clear();
+    textureCache.clear();
+    shaderCache.clear();
+    activeParticles = [];
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
+  }
+  window.__hermesSceneDispose = dispose;
+  window.addEventListener('pagehide', dispose);
   function render(now) {
+    rafId = null;
+    if (disposed || isPaused || contextLost) return;
     try {
-      if (contextLost) { requestAnimationFrame(render); return; }
       renderFrame(now);
     } catch (e) {
-      if (!window.__weRenderErr) {
-        window.__weRenderErr = 1;
-        console.error('we-scene-player render error:', e && e.stack || String(e));
-      }
-      requestAnimationFrame(render);
+      stopWithError(e);
+      return;
     }
+    nextFrameAt = now + frameInterval;
+    scheduleRender();
   }
 
   canvas.addEventListener('webglcontextlost', (event) => {
     event.preventDefault();
     contextLost = true;
+    cancelRender();
+    for (const rec of videoTextureCache.values()) rec.video.pause();
   });
   canvas.addEventListener('webglcontextrestored', () => {
     // WebGL objects are invalid after restoration. Ask the embedding
@@ -4290,7 +4917,7 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
     // stale programs/textures. The player frame is sandboxed without
     // allow-same-origin, so the embedding page's origin is unknown here;
     // '*' delivers to the window the event source check identifies.
-    window.parent.postMessage({ type: 'dsh-scene-needs-reload' }, '*');
+    if (!disposed) window.parent.postMessage({ type: 'dsh-scene-needs-reload' }, '*');
   });
 
   // Load manifest
@@ -4298,11 +4925,12 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
   fetch('/api/skin-center/we/scene-manifest/' + token)
     .then(res => res.json())
     .then(data => {
-      if (data.ok && data.manifest) {
+      if (!disposed && data.ok && data.manifest) {
         sceneData = data.manifest;
+        scheduleRender();
       }
     })
-    .catch(err => console.error('Failed to load scene manifest', err));
+    .catch(stopWithError);
 
   // Listen for controller messages; only the embedding parent may steer the
   // player. Origin cannot filter here: the player runs sandboxed without
@@ -4313,10 +4941,35 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
     if (ev.source !== window.parent) return;
     const msg = ev.data;
     if (!msg || typeof msg !== 'object') return;
+    if (disposed) return;
     if (msg.type === 'dsh-set-fit' && msg.fit) {
       fitMode = msg.fit;
     } else if (msg.type === 'dsh-set-pause') {
+      if (isPaused === !!msg.paused) return;
       isPaused = !!msg.paused;
+      if (isPaused) { pausedAt = performance.now(); cancelRender(); }
+      for (const rec of videoTextureCache.values()) {
+        if (isPaused) {
+          rec.video.pause();
+        } else if (rec.enabled && !contextLost) {
+          void rec.video.play().catch(() => {});
+        }
+      }
+      if (!isPaused) {
+        const now = performance.now();
+        if (pausedAt !== null) startTime += now - pausedAt;
+        pausedAt = null;
+        lastTime = now;
+        scheduleRender();
+      }
+    } else if (msg.type === 'dsh-set-cursor') {
+      // Mirrored pointer from the host (the iframe itself never gets input).
+      if (Number.isFinite(msg.x)) cursorX = Math.min(1, Math.max(0, msg.x));
+      if (Number.isFinite(msg.y)) cursorY = Math.min(1, Math.max(0, msg.y));
+      mouseX = cursorX;
+      mouseY = cursorY;
+      if ('active' in msg) cursorActive = !!msg.active;
+      else cursorActive = true;
     } else if (msg.type === 'dsh-recover-renderer') {
       if (gl.isContextLost()) {
         const ext = gl.getExtension('WEBGL_lose_context');
@@ -4324,12 +4977,11 @@ const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
         else window.parent.postMessage({ type: 'dsh-scene-needs-reload' }, '*');
       } else {
         // Force an immediate fresh frame after compositor/theme changes.
-        renderFrame(performance.now());
+        scheduleRender();
       }
     }
   });
 
-  requestAnimationFrame(render);
 })();
 </script>
 </body>
@@ -4403,6 +5055,44 @@ const WE_SHIM_JS = [
   '  };',
   '  window.wallpaperRegisterLEDColorListener = function () {};',
   '  window.wallpaperRegisterFPSListener = function () {};',
+  '  // Cursor bridge: the backdrop iframe never receives input',
+  '  // (pointer-events none), so the host mirrors the real pointer position',
+  '  // via hermes-we-cursor messages. Synthesized mousemove events let pages',
+  '  // hide elements near the cursor exactly as if the pointer hovered the',
+  '  // page itself (WE forwards real mouse into CEF). Unchanged positions',
+  '  // skip the dispatch so elementFromPoint layout work stays bounded.',
+  '  var cursorPos = { x: 0.5, y: 0.5, active: false };',
+  '  window.__hermesCursor = cursorPos;',
+  '  var lastDispatch = null;',
+  '  var synthCursor = function () {',
+  '    try {',
+  '      var cx = cursorPos.x * window.innerWidth;',
+  '      var cy = cursorPos.y * window.innerHeight;',
+  '      if (lastDispatch && lastDispatch[0] === cx && lastDispatch[1] === cy) return;',
+  '      lastDispatch = [cx, cy];',
+  '      var target = null;',
+  '      try { target = document.elementFromPoint(cx, cy); } catch (e) { target = null; }',
+  '      if (!target) target = document.documentElement || document;',
+  '      var opts = { bubbles: true, cancelable: true, clientX: cx, clientY: cy };',
+  '      var evt = null;',
+  '      try { evt = new MouseEvent("mousemove", opts); }',
+  '      catch (e) {',
+  '        evt = document.createEvent("MouseEvents");',
+  '        evt.initMouseEvent("mousemove", true, true, window, 0, cx, cy, cx, cy, false, false, false, false, 0, null);',
+  '      }',
+  '      target.dispatchEvent(evt);',
+  '    } catch (e) {}',
+  '  };',
+  '  window.addEventListener("message", function (ev) {',
+  '    if (ev.source !== window.parent) return;',
+  '    var m = ev.data;',
+  '    if (!m || m.type !== "hermes-we-cursor") return;',
+  '    if (isFinite(m.x)) cursorPos.x = Math.min(1, Math.max(0, m.x));',
+  '    if (isFinite(m.y)) cursorPos.y = Math.min(1, Math.max(0, m.y));',
+  '    if ("active" in m) cursorPos.active = !!m.active;',
+  '    else cursorPos.active = true;',
+  '    if (cursorPos.active) synthCursor();',
+  '  });',
   '})();',
   '',
 ].join('\n')
@@ -4447,33 +5137,78 @@ function replaceResources(value, URLs) {
   return value
 }
 
-async function loadSceneManifest(bridge, manifestPath) {
+function sceneResourceFileUrl(path) {
+  if (typeof path !== 'string' || !/^[A-Za-z]:[\\/]/.test(path) || !/\.(png|mp4)$/i.test(path)) return null
+  return `file:///${path.replace(/\\/g, '/').split('/').map((part, index) => index ? encodeURIComponent(part) : part).join('/')}`
+}
+
+async function loadSceneManifest(bridge, manifestPath, prepareScene = null, signal = null) {
   if (!bridge?.readFileText || !bridge?.readFileDataUrl) throw new Error('Hermes local file bridge unavailable')
-  const file = await bridge.readFileText(manifestPath)
-  if (file?.truncated || !file?.text) throw new Error('Scene manifest is missing or truncated')
-  const data = JSON.parse(file.text)
-  if (!data.manifest || typeof data.resources !== 'object') throw new Error('Scene manifest is invalid')
+  const readManifest = async path => {
+    signal?.throwIfAborted()
+    const file = await bridge.readFileText(path)
+    signal?.throwIfAborted()
+    if (file?.truncated || !file?.text) throw new Error('Scene manifest is missing or truncated')
+    const data = JSON.parse(file.text)
+    if (!data.manifest || typeof data.resources !== 'object') throw new Error('Scene manifest is invalid')
+    return data
+  }
+  let data = await readManifest(manifestPath)
+  // A saved selection points directly at its old cache. Upgrading the backend
+  // key alone cannot migrate it: prepare it before loading any obsolete assets.
+  if (Number(data.parserVersion || 0) < 6 && prepareScene && typeof data.scenePath === 'string') {
+    const dir = data.scenePath.replace(/[\\/][^\\/]+$/, '')
+    const prepared = await prepareScene(dir)
+    if (!prepared?.ok || !prepared.manifest || !prepared.manifestPath) {
+      throw new Error(prepared?.error || 'Scene cache refresh failed')
+    }
+    data = await readManifest(prepared.manifestPath)
+  }
   const paths = Object.entries(data.resources)
   const URLs = {}
   const objectUrls = []
   let totalBytes = 0
+  const loadedPaths = new Map()
+  // The Electron file-origin player can decode cache files directly. Verify
+  // access with HEAD and retain the bridge path on restricted/older hosts.
+  // In particular, videos stay native media streams instead of whole-file
+  // base64 IPC strings + decoded buffers + resident Blob copies.
+  const nativeFiles = typeof window !== 'undefined' && window.location?.protocol === 'file:' && window.hermesDesktop === bridge
   try {
     // Read sequentially: several 100 MiB video layers can otherwise multiply
     // transient base64 and decoded buffers until the Hermes renderer runs OOM.
     for (const [url, path] of paths) {
+      signal?.throwIfAborted()
       if (typeof path !== 'string') continue
+      const pathKey = path.replace(/\\/g, '/').toLowerCase()
+      if (loadedPaths.has(pathKey)) { URLs[url] = loadedPaths.get(pathKey); continue }
+      const fileUrl = nativeFiles ? sceneResourceFileUrl(path) : null
+      if (fileUrl) {
+        try {
+          const response = await fetch(fileUrl, { method: 'HEAD', signal })
+          signal?.throwIfAborted()
+          if (response.ok) {
+            URLs[url] = fileUrl
+            loadedPaths.set(pathKey, fileUrl)
+            continue
+          }
+        } catch { signal?.throwIfAborted() }
+      }
       let data
       try { data = await bridge.readFileDataUrl(path) }
       catch {
         if (!bridge.readFileDataUrlForAttach) throw new Error('Scene resource exceeds the Hermes file-read limit')
         data = await bridge.readFileDataUrlForAttach(path)
       }
-      const blob = await fetch(data).then(response => response.blob())
+      signal?.throwIfAborted()
+      const blob = await fetch(data, { signal }).then(response => response.blob())
+      signal?.throwIfAborted()
       totalBytes += blob.size
       if (totalBytes > 512 * 1024 * 1024) throw new Error('Scene resources exceed the 512 MiB renderer budget')
       const objectUrl = URL.createObjectURL(blob)
       objectUrls.push(objectUrl)
       URLs[url] = objectUrl
+      loadedPaths.set(pathKey, objectUrl)
     }
     return { manifest: replaceResources(data.manifest, URLs), framePath: data.framePath,
       missing: data.missing || [], resourceCount: Object.keys(URLs).length,
@@ -4481,6 +5216,27 @@ async function loadSceneManifest(bridge, manifestPath) {
   } catch (error) {
     objectUrls.forEach(url => URL.revokeObjectURL(url))
     throw error
+  }
+}
+
+function isSceneBackendMissing(error) {
+  return /Plugin not found|\b404\b/.test(String(error?.message || error))
+}
+
+/** An explicit recovery action uses Hermes' activation authority, never config edits. */
+async function enableSceneBackend(bridge) {
+  if (!bridge?.api) throw new Error('Hermes plugin activation API unavailable')
+  const result = await bridge.api({ path: '/api/dashboard/agent-plugins/hermes-skins/enable', method: 'POST' })
+  if (!result?.ok || result.consent_required) throw new Error(result?.error || 'Scene backend could not be enabled')
+  // Hermes' gateway_reloaded flag describes agent handlers, not dashboard API
+  // routes. The route is mounted at server startup: verify it independently.
+  try {
+    const health = await bridge.api({ path: '/api/plugins/hermes-skins/scene/health' })
+    if (!health?.ok) throw new Error('Scene helper or Node.js runtime unavailable')
+    return { ready: true, restartRequired: false }
+  } catch (error) {
+    if (!isSceneBackendMissing(error)) throw error
+    return { ready: false, restartRequired: true }
   }
 }
 
@@ -4501,7 +5257,7 @@ async function loadWebWallpaper(bridge, mainPath, shimSource = WE_SHIM_JS) {
     for (const entry of listing?.entries || []) {
       if (count >= 400) break
       const relative = entry.path.slice(root.length).replace(/^[\\/]+/, '').replace(/\\/g, '/')
-      if (!relative || relative.includes('..') || !entry.path.toLowerCase().startsWith(root.toLowerCase())) continue
+      if (!relative || relative.includes('..') || !entry.path.toLowerCase().startsWith((root + '\\').toLowerCase())) continue
       if (entry.isDirectory) {
         if (depth < 4) queue.push({ dir: entry.path, depth: depth + 1 })
       } else {
@@ -4530,12 +5286,13 @@ async function loadWebWallpaper(bridge, mainPath, shimSource = WE_SHIM_JS) {
       const text = await readText(absolute)
       if (text !== null) styles.set(relative, text)
     } else {
-      try {
-        const data = await bridge.readFileDataUrl(absolute)
-        dataBytes += data.length
-        if (dataBytes > 64 * 1024 * 1024) throw new Error('web wallpaper assets exceed 64 MiB')
-        assets.set(relative, data)
-      } catch { /* A decorative asset can be absent; the page still loads. */ }
+      let data
+      try { data = await bridge.readFileDataUrl(absolute) }
+      catch { continue /* A decorative asset can be absent. */ }
+      if (typeof data !== 'string') continue
+      dataBytes += data.length
+      if (dataBytes > 64 * 1024 * 1024) throw new Error('web wallpaper assets exceed 64 MiB')
+      assets.set(relative, data)
     }
   }
   const basenameCounts = new Map()
@@ -4925,7 +5682,11 @@ function WallpaperEnginePanel({ store, controller, preview, prepareScene }) {
   const [page, setPage] = useState(0)
   const [previews, setPreviews] = useState({})
   const [importingId, setImportingId] = useState(null)
+  const [backendMissing, setBackendMissing] = useState(false)
+  const [recoveringBackend, setRecoveringBackend] = useState(false)
+  const pendingScene = useRef(null)
   const scanRevision = useRef(0)
+  const previewCache = useRef(new Map())
   const bridge = typeof window !== 'undefined' ? window.hermesDesktop : null
   const rootsKey = config.weRoots.join('|')
 
@@ -4962,16 +5723,53 @@ function WallpaperEnginePanel({ store, controller, preview, prepareScene }) {
     if (!bridge?.readFileDataUrl) return
     let cancelled = false
     const fetchPreviews = async () => {
+      const loaded = {}
+      // Only the current page owns React image state. Keep a small LRU across
+      // pages instead of retaining every visited full-size base64 thumbnail.
+      const publish = () => { if (!cancelled) setPreviews({ ...loaded }) }
+      for (const item of visible) {
+        const cached = previewCache.current.get(item.previewPath)
+        if (cached) {
+          loaded[item.previewPath] = cached
+          previewCache.current.delete(item.previewPath)
+          previewCache.current.set(item.previewPath, cached)
+        }
+      }
+      publish()
       for (let start = 0; start < visible.length && !cancelled; start += 4) {
         await Promise.all(visible.slice(start, start + 4).map(async item => {
-          if (previews[item.previewPath]) return
+          if (loaded[item.previewPath] || !/\.(png|jpe?g|webp|gif|bmp)$/i.test(item.previewPath || '')) return
+          try {
+            if (window.location?.protocol === 'file:') {
+              const url = normalizeMediaSource(item.previewPath)
+              if (url) {
+                const response = await fetch(url, { method: 'HEAD' })
+                if (cancelled) return
+                if (response.ok) {
+                  loaded[item.previewPath] = url
+                  previewCache.current.set(item.previewPath, url)
+                  return
+                }
+              }
+            }
+          } catch { /* Restricted hosts retain the file-data bridge below. */ }
+          if (cancelled) return
           try {
             const data = await bridge.readFileDataUrl(item.previewPath)
             if (!cancelled && typeof data === 'string' && data.startsWith('data:image/')) {
-              setPreviews(current => ({ ...current, [item.previewPath]: data }))
+              loaded[item.previewPath] = data
+              previewCache.current.set(item.previewPath, data)
             }
           } catch { /* A missing thumbnail must not block the inventory. */ }
         }))
+        let bytes = 0
+        for (const data of previewCache.current.values()) bytes += data.length * 2
+        while (previewCache.current.size > 36 || bytes > 24 * 1024 * 1024) {
+          const oldest = previewCache.current.keys().next().value
+          bytes -= previewCache.current.get(oldest).length * 2
+          previewCache.current.delete(oldest)
+        }
+        publish()
       }
     }
     void fetchPreviews()
@@ -4993,6 +5791,7 @@ function WallpaperEnginePanel({ store, controller, preview, prepareScene }) {
 
   async function useWallpaper(item) {
     setError('')
+    setBackendMissing(false)
     setImportingId(item.id)
     try {
       let source = wallpaperMediaUrl(item.mediaPath, item.mediaType)
@@ -5040,10 +5839,29 @@ function WallpaperEnginePanel({ store, controller, preview, prepareScene }) {
       // A blocked backend surfaces as an ipc 404 "Plugin not found" — map it
       // to the recovery action instead of the raw electron error text.
       const message = String(cause?.message || cause)
-      setError(/Plugin not found|\b404\b/.test(message) ? t('weSceneBackendMissing') : message)
+      const missing = isSceneBackendMissing(cause)
+      pendingScene.current = missing ? item : null
+      setBackendMissing(missing)
+      setError(missing ? t('weSceneBackendMissing') : message)
     } finally {
       setImportingId(null)
     }
+  }
+
+  async function recoverBackend() {
+    setRecoveringBackend(true)
+    try {
+      const result = await enableSceneBackend(bridge)
+      setBackendMissing(false)
+      if (result.ready) {
+        setError('')
+        const item = pendingScene.current
+        pendingScene.current = null
+        if (item) await useWallpaper(item)
+      } else setError(t('weSceneBackendRestartRequired'))
+    } catch (cause) {
+      setError(String(cause?.message || cause))
+    } finally { setRecoveringBackend(false) }
   }
 
   const kindLabel = kind => t({ video: 'weTypeVideo', scene: 'weTypeScene', image: 'weTypeImage', web: 'weTypeWeb' }[kind] || 'weTypeOther')
@@ -5061,6 +5879,9 @@ function WallpaperEnginePanel({ store, controller, preview, prepareScene }) {
     ] }),
     jsx('p', { className: 'mt-3 text-xs text-muted-foreground', children: loading ? t('weScanning') : t('weFound', items.length) }),
     error && jsx('p', { className: 'mt-2 text-xs text-destructive', children: error }),
+    backendMissing && bridge?.api && jsx(Button, { size: 'sm', variant: 'outline',
+      className: 'mt-2', disabled: recoveringBackend, onClick: () => void recoverBackend(),
+      children: recoveringBackend ? t('weSceneBackendEnabling') : t('weSceneBackendEnable') }),
     !loading && config.weSelection && items.length > 0 && !items.some(item => item.id === config.weSelection.id) &&
       jsx('p', { className: 'mt-2 text-xs text-amber-600', children: t('weMissing') }),
     jsxs('div', { className: 'mt-4 flex flex-wrap items-center gap-2', children: [
@@ -5078,14 +5899,14 @@ function WallpaperEnginePanel({ store, controller, preview, prepareScene }) {
       const selected = config.weSelection?.id === item.id
       return jsxs('article', { key: item.id, 'data-hermes-skins-surface': '', className: `overflow-hidden rounded-lg border bg-background ${selected ? 'border-primary' : 'border-border'}`, children: [
         previews[item.previewPath]
-          ? jsx('img', { src: previews[item.previewPath], alt: '', loading: 'lazy', className: 'h-36 w-full object-cover' })
+          ? jsx('img', { src: previews[item.previewPath], alt: '', loading: 'lazy', decoding: 'async', className: 'h-36 w-full object-cover' })
           : jsx('div', { className: 'h-36 bg-muted/40' }),
         jsxs('div', { className: 'space-y-2 p-3', children: [
           jsx('h3', { className: 'line-clamp-2 min-h-8 text-sm font-medium text-foreground', title: item.title, children: item.title }),
           jsx('p', { className: 'text-xs text-muted-foreground', children: item.kind === 'scene'
             ? `${kindLabel(item.kind)} · ${t('weSceneLive')}`
             : item.staticFallback ? `${kindLabel(item.kind)} · ${t('weStaticFallback')}` : kindLabel(item.kind) }),
-          jsx(Button, { size: 'sm', className: 'w-full', disabled: Boolean(preview) || Boolean(importingId),
+          jsx(Button, { size: 'sm', className: 'w-full', disabled: Boolean(preview) || Boolean(importingId) || recoveringBackend,
             variant: selected ? 'secondary' : 'default', onClick: () => void useWallpaper(item),
             children: importingId === item.id ? t('wePreparing') : selected ? t('weSelected') : t('weUse') })
         ] })
@@ -5123,7 +5944,7 @@ function SkinCenterPage({ store, controller, prepareScene }) {
   const customSourceValid = !sourceDraft || Boolean(normalizeMediaSource(sourceDraft, config.wallpaperType))
 
   useEffect(() => controller.sync(theme.themeName, theme.renderedMode),
-    [controller, theme.themeName, theme.renderedMode, config, preview])
+    [controller, theme.themeName, theme.renderedMode])
   useEffect(() => setSourceDraft(config.wallpaperSource), [config.wallpaperSource])
   useLayoutEffect(() => {
     const el = scrollRef.current
@@ -5136,17 +5957,23 @@ function SkinCenterPage({ store, controller, prepareScene }) {
     if (el.scrollTop >= desired - 1) return undefined
     let cancelled = false
     let frames = 120
-    const cancel = () => { cancelled = true }
+    let frame = null
+    const cancel = () => {
+      cancelled = true
+      if (frame !== null) cancelAnimationFrame(frame)
+      el.removeEventListener('wheel', cancel)
+      el.removeEventListener('touchmove', cancel)
+    }
     el.addEventListener('wheel', cancel, { passive: true, once: true })
     el.addEventListener('touchmove', cancel, { passive: true, once: true })
     const tick = () => {
-      if (cancelled || !frames) return
+      if (cancelled || !frames) { cancel(); return }
       frames -= 1
-      if (el.scrollTop >= desired - 1) return
+      if (el.scrollTop >= desired - 1) { cancel(); return }
       el.scrollTop = desired
-      requestAnimationFrame(tick)
+      frame = requestAnimationFrame(tick)
     }
-    requestAnimationFrame(tick)
+    frame = requestAnimationFrame(tick)
     return cancel
   }, [tab])
 
@@ -5170,7 +5997,10 @@ function SkinCenterPage({ store, controller, prepareScene }) {
         jsx('input', {
           type: 'range', min, max, step: 1, value: config[key],
           disabled: !(active || config.wallpaperSource) || Boolean(preview) || extraDisabled,
-          onChange: event => controller.changeConfig({ [key]: Number(event.target.value) }),
+          onChange: event => controller.scheduleConfig({ [key]: Number(event.target.value) }),
+          onPointerUp: () => controller.flushConfig(),
+          onKeyUp: () => controller.flushConfig(),
+          onBlur: () => controller.flushConfig(),
           className: 'w-full accent-primary'
         }),
         jsx('span', { className: 'text-[11px] text-muted-foreground', children: description })
@@ -5337,7 +6167,9 @@ export default {
 
     // 2. Initialize engines & state
     const store = createSkinStore(ctx)
-    const backdropManager = new BackdropManager()
+    const backdropManager = new BackdropManager({
+      prepareScene: dir => ctx.rest('/scene/prepare', { method: 'POST', body: { dir } })
+    })
     const glassController = new GlassController()
     const rangeController = new RangeController()
     rangeController.start()
@@ -5426,6 +6258,7 @@ export default {
         disposeThemeWatcher()
         rangeController.destroy()
         controller.destroy()
+        store.destroy()
       })
     }
   }

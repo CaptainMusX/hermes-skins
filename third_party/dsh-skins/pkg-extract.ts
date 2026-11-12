@@ -809,7 +809,7 @@ function decodeDxt5(src: Uint8Array, width: number, height: number): Uint8Array 
       if (a0 > a1) {
         for (let k = 2; k < 8; k++) alphas[k] = (((8 - k) * a0 + (k - 1) * a1) / 7) | 0
       } else {
-        for (let k = 2; k < 6; k++) alphas[k] = (((6 - k) * a0 + (k - 2) * a1) / 5) | 0
+        for (let k = 2; k < 6; k++) alphas[k] = (((6 - k) * a0 + (k - 1) * a1) / 5) | 0
         alphas[6] = 0
         alphas[7] = 255
       }
@@ -1223,6 +1223,103 @@ function isLikelyMaskOrHelper(path: string): boolean {
     lower.includes('font') ||
     lower.includes('text_')
   )
+}
+
+export interface ShakeEffect {
+  speed: number
+  strength: number
+  friction: [number, number]
+  bounds: [number, number]
+  direction: number
+  flowMaskUrl?: string
+  opacityMaskUrl?: string
+}
+
+/** Extract WE shake effect (e.g. eye blinking, breathing UV deformation). */
+export function extractShakeEffect(
+  obj: Record<string, unknown>,
+  resolveTexture: (ref: string) => string | undefined,
+  props?: Record<string, unknown>,
+): ShakeEffect | undefined {
+  const enabled = (raw: unknown): boolean => {
+    let value = raw
+    if (raw && typeof raw === 'object') {
+      const binding = raw as Record<string, unknown>
+      value = binding.value
+      if (typeof binding.user === 'string') {
+        const property = props?.[binding.user]
+        const override = property && typeof property === 'object'
+          ? (property as Record<string, unknown>).value : property
+        if (override !== undefined) value = override
+      }
+    }
+    return value !== false && value !== 0
+  }
+  const effect = (Array.isArray(obj.effects) ? obj.effects : []).find((e) =>
+    e && typeof e === 'object' && typeof e.file === 'string' &&
+    e.file.replace(/\\/g, '/').toLowerCase() === 'effects/shake/effect.json' && enabled(e.visible),
+  ) as Record<string, unknown> | undefined
+  if (!effect) return undefined
+  const passes = (Array.isArray(effect.passes) ? effect.passes : []) as Array<Record<string, unknown>>
+  const pass0 = passes[0] || {}
+  const values = (pass0.constantshadervalues ?? {}) as Record<string, unknown>
+  const combos = (pass0.combos ?? {}) as Record<string, unknown>
+  const numeric = (v: unknown, fallback: number) => typeof v === 'number' && Number.isFinite(v) ? v : fallback
+  const vector2 = (raw: unknown, fallback: [number, number]): [number, number] => {
+    const parsed = typeof raw === 'string' ? raw.trim().split(/\s+/).map(Number) : raw
+    return Array.isArray(parsed) && parsed.length >= 2 &&
+      typeof parsed[0] === 'number' && Number.isFinite(parsed[0]) &&
+      typeof parsed[1] === 'number' && Number.isFinite(parsed[1])
+      ? [parsed[0], parsed[1]] : fallback
+  }
+
+  const directionRaw = combos.DIRECTION
+  const direction = typeof directionRaw === 'number' ? directionRaw : parseInt(String(directionRaw), 10) || 0
+
+  const result: ShakeEffect = {
+    speed: numeric(values.speed, 1.0),
+    strength: numeric(values.strength, 0.1),
+    friction: vector2(values.friction, [1, 1]),
+    bounds: vector2(values.bounds, [0, 1]),
+    direction,
+  }
+
+  const textures = Array.isArray(pass0.textures) ? pass0.textures : []
+  const flowRef = textures[1]
+  if (typeof flowRef === 'string' && flowRef && !flowRef.startsWith('_rt_')) {
+    const url = resolveTexture(flowRef)
+    if (url) result.flowMaskUrl = url
+  }
+  const opacityRef = textures[3]
+  if (typeof opacityRef === 'string' && opacityRef && !opacityRef.startsWith('_rt_')) {
+    const url = resolveTexture(opacityRef)
+    if (url) result.opacityMaskUrl = url
+  }
+
+  return result
+}
+
+/** Cursor-driven layer flags from the author's scene data.
+ * WE implements "hide near the cursor" (butterfly vanishes to reveal the art
+ * beneath) as SceneScript cursorEnter/cursorLeave handlers that toggle
+ * visibility/alpha. Only script-driven hiding is detected from serialized
+ * text. Cursor ripple simulation is deliberately unsupported. */
+function cursorLayerFlags(obj: Record<string, unknown>): { cursorHide?: boolean } {
+  let text = ''
+  try {
+    text = JSON.stringify(obj).toLowerCase()
+  } catch {
+    return {}
+  }
+  if (!text.includes('cursor')) return {}
+  const out: { cursorHide?: boolean } = {}
+  if (
+    /cursor(enter|leave|move|down|up|click)/.test(text) &&
+    /(visib|alpha|opacity|hide|show|fade)/.test(text)
+  ) {
+    out.cursorHide = true
+  }
+  return out
 }
 
 function hasContent(rgba: Uint8Array, width: number, height: number): boolean {
@@ -1676,6 +1773,17 @@ export interface SceneManifestLayer {
   timePeriod?: 'morning' | 'day' | 'dusk' | 'night' | 'manual'
   /** An embedded MP4 texture served directly to the scene player. */
   videoUrl?: string
+  /** Layer hides while the cursor hovers it (WE cursorEnter/leave visibility scripts,
+   *  e.g. a butterfly that vanishes to reveal the art beneath). */
+  cursorHide?: boolean
+  /** WE xray effect: blend texture replacing the layer around the cursor. */
+  xrayBlendUrl?: string
+  /** WE xray brush size (constantshadervalues size, ~0..1). */
+  xraySize?: number
+  /** WE xray blend strength (constantshadervalues multiply). */
+  xrayMultiply?: number
+  /** WE shake effect: UV oscillation/flow mask deformation (e.g. eye blinking, breathing). */
+  shakeEffect?: ShakeEffect
 }
 
 export interface DecodedMesh {
@@ -2654,6 +2762,63 @@ function buildSceneManifestVia(access: SceneAccess, token: string, projectOverri
       nameLower.includes('bush') ||
       nameLower.includes('fence')
 
+    // Script-driven hiding and the enabled, authored shake/xray effects
+    // are independent; ordinary waterripple is not interactive.
+    const cursorFlags = cursorLayerFlags(obj)
+    const shakeEffect = extractShakeEffect(obj, (ref) => {
+      const path = resolveLayerTex(ref)
+      return path ? resourceUrl(path) : undefined
+    }, props)
+
+    // WE xray effect (e.g. the 蝴蝶 wallpaper): the effect's blend texture
+    // replaces the layer around the cursor, gated by the blend alpha, the
+    // multiply constant and a soft sprite falloff. Resolve the blend texture
+    // (pass textures are [framebuffer, blend, sprite, ...]) so the player can
+    // reproduce the reveal without the author's sprite asset.
+    let xrayBlendUrl: string | undefined
+    let xraySize = 0.2
+    let xrayMultiply = 1
+    const xrayEffect = (Array.isArray(obj.effects) ? obj.effects : []).find(
+      (e) =>
+        typeof (e as Record<string, unknown> | null)?.file === 'string' &&
+        ((e as Record<string, unknown>).file as string).toLowerCase().includes('xray'),
+    ) as Record<string, unknown> | undefined
+    if (xrayEffect) {
+      const xrayPass = (Array.isArray(xrayEffect.passes) ? xrayEffect.passes : [])[0] as
+        | Record<string, unknown>
+        | undefined
+      const xcsv = xrayPass?.constantshadervalues as Record<string, unknown> | undefined
+      if (typeof xcsv?.size === 'number' && Number.isFinite(xcsv.size)) {
+        xraySize = Math.min(1, Math.max(0.02, xcsv.size))
+      }
+      if (typeof xcsv?.multiply === 'number' && Number.isFinite(xcsv.multiply)) {
+        xrayMultiply = Math.min(10, Math.max(0, xcsv.multiply))
+      }
+      const xrayRefs = (Array.isArray(xrayPass?.textures) ? xrayPass.textures : [])
+        .map((t) => (t === null || t === undefined ? '' : String(t)))
+      const isSpriteOrUtil = (ref: string) => {
+        const lower = ref.toLowerCase()
+        return (
+          !lower ||
+          lower === 'util/white' ||
+          lower.startsWith('_rt_') ||
+          lower.includes('halo') ||
+          lower.includes('particle/') ||
+          lower.includes('sprite')
+        )
+      }
+      // Index 1 is the blend slot by convention; fall back to the first
+      // non-framebuffer, non-sprite texture when authors reorder slots.
+      const blendRef =
+        (xrayRefs[1] && !isSpriteOrUtil(xrayRefs[1]) ? xrayRefs[1] : '') ||
+        xrayRefs.find((ref) => !isSpriteOrUtil(ref)) ||
+        ''
+      if (blendRef) {
+        const blendPath = resolveLayerTex(blendRef)
+        if (blendPath) xrayBlendUrl = resourceUrl(blendPath)
+      }
+    }
+
     const layerX = objOrigin[0] + alignDx
     const layerY = objOrigin[1] + alignDy
 
@@ -2702,6 +2867,11 @@ function buildSceneManifestVia(access: SceneAccess, token: string, projectOverri
         ? (nameLower === 'mddn' ? 'manual' : nameLower as 'morning' | 'day' | 'dusk' | 'night')
         : undefined,
       videoUrl,
+      cursorHide: cursorFlags.cursorHide,
+      shakeEffect,
+      xrayBlendUrl,
+      xraySize: xrayBlendUrl ? xraySize : undefined,
+      xrayMultiply: xrayBlendUrl ? xrayMultiply : undefined,
     })
   }
 

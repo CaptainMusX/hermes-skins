@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
 import { loadWebWallpaper } from '../src/engine/web-player.js'
 
 test('web wallpaper bundles local script and image into an isolated document', async () => {
@@ -22,4 +23,12 @@ test('web wallpaper bundles local script and image into an isolated document', a
   assert.match(html, /data:image\/png;base64,AAAA/)
   assert.doesNotMatch(html, /src="main\.js"/)
   assert.match(html, /"speed":\{"value":2\}/)
+})
+
+test('web shim bridges the mirrored cursor into mousemove', () => {
+  const shim = fs.readFileSync(new URL('../third_party/dsh-skins/we-shim-source.ts', import.meta.url), 'utf8')
+  assert.match(shim, /hermes-we-cursor/)
+  assert.match(shim, /__hermesCursor/)
+  assert.match(shim, /mousemove/)
+  assert.match(shim, /elementFromPoint/)
 })

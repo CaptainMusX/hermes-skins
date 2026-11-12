@@ -66,7 +66,7 @@ function main() {
     videoPath = path.join(cacheDir, 'scene-video.mp4')
     fs.writeFileSync(videoPath, video)
   }
-  const result = { ...probe, manifest, resources, missing, framePath, videoPath,
+  const result = { ...probe, parserVersion: 6, manifest, resources, missing, framePath, videoPath,
     scenePath: pkgPath, projectPath }
   const temp = path.join(cacheDir, `manifest.json.tmp-${process.pid}`)
   fs.writeFileSync(temp, JSON.stringify(result), 'utf8')

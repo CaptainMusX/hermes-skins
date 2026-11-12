@@ -37,33 +37,78 @@ function replaceResources(value, URLs) {
   return value
 }
 
-export async function loadSceneManifest(bridge, manifestPath) {
+export function sceneResourceFileUrl(path) {
+  if (typeof path !== 'string' || !/^[A-Za-z]:[\\/]/.test(path) || !/\.(png|mp4)$/i.test(path)) return null
+  return `file:///${path.replace(/\\/g, '/').split('/').map((part, index) => index ? encodeURIComponent(part) : part).join('/')}`
+}
+
+export async function loadSceneManifest(bridge, manifestPath, prepareScene = null, signal = null) {
   if (!bridge?.readFileText || !bridge?.readFileDataUrl) throw new Error('Hermes local file bridge unavailable')
-  const file = await bridge.readFileText(manifestPath)
-  if (file?.truncated || !file?.text) throw new Error('Scene manifest is missing or truncated')
-  const data = JSON.parse(file.text)
-  if (!data.manifest || typeof data.resources !== 'object') throw new Error('Scene manifest is invalid')
+  const readManifest = async path => {
+    signal?.throwIfAborted()
+    const file = await bridge.readFileText(path)
+    signal?.throwIfAborted()
+    if (file?.truncated || !file?.text) throw new Error('Scene manifest is missing or truncated')
+    const data = JSON.parse(file.text)
+    if (!data.manifest || typeof data.resources !== 'object') throw new Error('Scene manifest is invalid')
+    return data
+  }
+  let data = await readManifest(manifestPath)
+  // A saved selection points directly at its old cache. Upgrading the backend
+  // key alone cannot migrate it: prepare it before loading any obsolete assets.
+  if (Number(data.parserVersion || 0) < 6 && prepareScene && typeof data.scenePath === 'string') {
+    const dir = data.scenePath.replace(/[\\/][^\\/]+$/, '')
+    const prepared = await prepareScene(dir)
+    if (!prepared?.ok || !prepared.manifest || !prepared.manifestPath) {
+      throw new Error(prepared?.error || 'Scene cache refresh failed')
+    }
+    data = await readManifest(prepared.manifestPath)
+  }
   const paths = Object.entries(data.resources)
   const URLs = {}
   const objectUrls = []
   let totalBytes = 0
+  const loadedPaths = new Map()
+  // The Electron file-origin player can decode cache files directly. Verify
+  // access with HEAD and retain the bridge path on restricted/older hosts.
+  // In particular, videos stay native media streams instead of whole-file
+  // base64 IPC strings + decoded buffers + resident Blob copies.
+  const nativeFiles = typeof window !== 'undefined' && window.location?.protocol === 'file:' && window.hermesDesktop === bridge
   try {
     // Read sequentially: several 100 MiB video layers can otherwise multiply
     // transient base64 and decoded buffers until the Hermes renderer runs OOM.
     for (const [url, path] of paths) {
+      signal?.throwIfAborted()
       if (typeof path !== 'string') continue
+      const pathKey = path.replace(/\\/g, '/').toLowerCase()
+      if (loadedPaths.has(pathKey)) { URLs[url] = loadedPaths.get(pathKey); continue }
+      const fileUrl = nativeFiles ? sceneResourceFileUrl(path) : null
+      if (fileUrl) {
+        try {
+          const response = await fetch(fileUrl, { method: 'HEAD', signal })
+          signal?.throwIfAborted()
+          if (response.ok) {
+            URLs[url] = fileUrl
+            loadedPaths.set(pathKey, fileUrl)
+            continue
+          }
+        } catch { signal?.throwIfAborted() }
+      }
       let data
       try { data = await bridge.readFileDataUrl(path) }
       catch {
         if (!bridge.readFileDataUrlForAttach) throw new Error('Scene resource exceeds the Hermes file-read limit')
         data = await bridge.readFileDataUrlForAttach(path)
       }
-      const blob = await fetch(data).then(response => response.blob())
+      signal?.throwIfAborted()
+      const blob = await fetch(data, { signal }).then(response => response.blob())
+      signal?.throwIfAborted()
       totalBytes += blob.size
       if (totalBytes > 512 * 1024 * 1024) throw new Error('Scene resources exceed the 512 MiB renderer budget')
       const objectUrl = URL.createObjectURL(blob)
       objectUrls.push(objectUrl)
       URLs[url] = objectUrl
+      loadedPaths.set(pathKey, objectUrl)
     }
     return { manifest: replaceResources(data.manifest, URLs), framePath: data.framePath,
       missing: data.missing || [], resourceCount: Object.keys(URLs).length,

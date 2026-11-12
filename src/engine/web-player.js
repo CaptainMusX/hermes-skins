@@ -14,7 +14,7 @@ export async function loadWebWallpaper(bridge, mainPath, shimSource = WE_SHIM_JS
     for (const entry of listing?.entries || []) {
       if (count >= 400) break
       const relative = entry.path.slice(root.length).replace(/^[\\/]+/, '').replace(/\\/g, '/')
-      if (!relative || relative.includes('..') || !entry.path.toLowerCase().startsWith(root.toLowerCase())) continue
+      if (!relative || relative.includes('..') || !entry.path.toLowerCase().startsWith((root + '\\').toLowerCase())) continue
       if (entry.isDirectory) {
         if (depth < 4) queue.push({ dir: entry.path, depth: depth + 1 })
       } else {
@@ -43,12 +43,13 @@ export async function loadWebWallpaper(bridge, mainPath, shimSource = WE_SHIM_JS
       const text = await readText(absolute)
       if (text !== null) styles.set(relative, text)
     } else {
-      try {
-        const data = await bridge.readFileDataUrl(absolute)
-        dataBytes += data.length
-        if (dataBytes > 64 * 1024 * 1024) throw new Error('web wallpaper assets exceed 64 MiB')
-        assets.set(relative, data)
-      } catch { /* A decorative asset can be absent; the page still loads. */ }
+      let data
+      try { data = await bridge.readFileDataUrl(absolute) }
+      catch { continue /* A decorative asset can be absent. */ }
+      if (typeof data !== 'string') continue
+      dataBytes += data.length
+      if (dataBytes > 64 * 1024 * 1024) throw new Error('web wallpaper assets exceed 64 MiB')
+      assets.set(relative, data)
     }
   }
   const basenameCounts = new Map()

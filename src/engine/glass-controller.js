@@ -46,6 +46,11 @@ export class GlassController {
     this.refitObserver = null
     this.refitTargets = new Set()
     this.refitQueued = false
+    this.refitTimer = null
+    this.materialRule = null
+    this.lastMaterialKey = null
+    this.terminalThemeKey = null
+    this.terminalBase = null
   }
 
   update({ enabled, glassTransparency = 10, bubbleOpacity = 100, composerFrost = 10, surfaceFrost = 8 }) {
@@ -56,10 +61,15 @@ export class GlassController {
       const styleEl = this.styleEl || document.getElementById(STYLE_ID)
       styleEl?.remove()
       this.styleEl = null
+      this.materialRule = null
+      this.lastMaterialKey = null
+      this.terminalThemeKey = null
       this.releaseRefitWatcher()
       return
     }
     if (!this.styleEl || !document.head.contains(this.styleEl)) {
+      this.materialRule = null
+      this.lastMaterialKey = null
       this.styleEl = document.getElementById(STYLE_ID) || document.createElement('style')
       this.styleEl.id = STYLE_ID
       this.styleEl.dataset.plugin = 'hermes-skins'
@@ -86,8 +96,8 @@ export class GlassController {
     // Frosted glass samples the wallpaper behind a surface; blur(0) would still
     // promote a composited layer, so the frost vars stay `none` when off.
     const frost = surfaceBlur > 0 ? `blur(${surfaceBlur}px)` : 'none'
-    const overlayFrost = surfaceBlur > 0 ? `blur(${Math.max(16, surfaceBlur * 2)}px) saturate(180%)` : 'none'
-    const overlayScrimFrost = surfaceBlur > 0 ? `blur(${Math.max(10, surfaceBlur)}px)` : 'none'
+    const overlayFrost = frost
+    const overlayScrimFrost = 'none'
     const composerFrostCss = composerBlur > 0 ? `blur(${composerBlur}px)` : 'none'
 
     // Terminal: xterm resolves --ui-terminal-surface-background to a concrete
@@ -103,18 +113,50 @@ export class GlassController {
     // "color(srgb …)" and paint the canvas black, and probing --ui-bg-chrome
     // keeps the value tracking the official light/dark mode on every sync.
     const terminalAlpha = root.dataset?.hermesTerminalAlpha === 'true'
+    const themeKey = `${root.dataset?.hermesTheme}:${root.dataset?.hermesMode}:${root.className}:${root.style?.cssText || ''}`
+    const materialKey = `${keep}:${bubbleKeep}:${composerBlur}:${surfaceBlur}:${terminalAlpha}:${themeKey}`
+    if (this.lastMaterialKey === materialKey && this.styleEl.isConnected) return
     let terminalSurface = 'var(--ui-bg-chrome)'
     if (terminalAlpha && document.body) {
-      const probe = document.createElement('span')
-      probe.style.cssText = 'position:absolute;visibility:hidden;pointer-events:none;background-color:var(--ui-bg-chrome);'
-      document.body.appendChild(probe)
-      const base = parseSerializedColor(getComputedStyle(probe).backgroundColor)
-      probe.remove()
+      // The resolved theme color only changes with the host theme. Reusing it
+      // avoids an append -> getComputedStyle -> remove flush on every drag.
+      if (this.terminalThemeKey !== themeKey) {
+        const probe = document.createElement('span')
+        probe.style.cssText = 'position:absolute;visibility:hidden;pointer-events:none;background-color:var(--ui-bg-chrome);'
+        document.body.appendChild(probe)
+        this.terminalBase = parseSerializedColor(getComputedStyle(probe).backgroundColor)
+        probe.remove()
+        this.terminalThemeKey = themeKey
+      }
+      const base = this.terminalBase
       if (base) terminalSurface = `rgba(${base.r}, ${base.g}, ${base.b}, ${keep / 100})`
     }
 
-    root.setAttribute('data-hermes-skins-active', 'true')
-    this.styleEl.textContent = `
+    if (root.getAttribute?.('data-hermes-skins-active') !== 'true') root.setAttribute('data-hermes-skins-active', 'true')
+    if (this.materialRule) {
+      // Keep the large selector sheet parsed and change only its material
+      // properties. CSSOM edits do not enqueue childList mutation scans.
+      const properties = {
+        '--hermes-skins-keep': `${keep}%`,
+        '--hermes-skins-floating-tint': `color-mix(in srgb, var(--ui-bg-chrome) ${floatingKeep}%, transparent)`,
+        '--hermes-skins-overlay-tint': `color-mix(in srgb, var(--ui-bg-chrome) ${overlayKeep}%, transparent)`,
+        '--hermes-skins-overlay-sidebar-tint': `color-mix(in srgb, var(--ui-bg-sidebar) ${Math.max(25, overlayKeep - 40)}%, transparent)`,
+        '--hermes-skins-frost': frost,
+        '--hermes-skins-overlay-frost': overlayFrost,
+        '--hermes-skins-overlay-scrim-frost': overlayScrimFrost,
+        '--hermes-skins-composer-frost': composerFrostCss,
+        '--user-bubble-keep': `${bubbleKeep}%`,
+        '--ui-terminal-surface-background': terminalSurface
+      }
+      for (const [name, value] of Object.entries(properties)) {
+        if (this.materialRule.getPropertyValue(name).trim() !== value) {
+          this.materialRule.setProperty(name, value, name === '--user-bubble-keep' ? 'important' : '')
+        }
+      }
+      this.lastMaterialKey = materialKey
+      return
+    }
+    const css = `
       :root[data-hermes-skins-active="true"] {
         --hermes-skins-keep: ${keep}%;
         --hermes-skins-chrome-tint: color-mix(in srgb, var(--ui-bg-chrome) var(--hermes-skins-keep), transparent);
@@ -326,16 +368,16 @@ export class GlassController {
          with clean text readability and wallpaper translucency. */
       :root[data-hermes-skins-active="true"] [data-overlay-surface] {
         background-color: color-mix(in srgb, #000 18%, transparent) !important;
-        backdrop-filter: blur(12px) !important;
-        -webkit-backdrop-filter: blur(12px) !important;
+        backdrop-filter: var(--hermes-skins-overlay-scrim-frost) !important;
+        -webkit-backdrop-filter: var(--hermes-skins-overlay-scrim-frost) !important;
       }
       :root[data-hermes-skins-active="true"] [data-glass-raised] {
         --ui-chat-surface-background: var(--hermes-skins-overlay-tint) !important;
         --ui-sidebar-surface-background: var(--hermes-skins-overlay-sidebar-tint) !important;
         --ui-editor-surface-background: var(--hermes-skins-overlay-tint) !important;
         background-color: var(--hermes-skins-overlay-tint) !important;
-        backdrop-filter: blur(20px) saturate(180%) !important;
-        -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+        backdrop-filter: var(--hermes-skins-overlay-frost) !important;
+        -webkit-backdrop-filter: var(--hermes-skins-overlay-frost) !important;
         box-shadow: 0 16px 40px rgba(0, 0, 0, 0.2), 0 0 0 1px color-mix(in srgb, var(--dt-border) 40%, transparent) !important;
       }
       /* Left sidebar in overlay cards: single layer translucency to avoid double-darkening */
@@ -352,16 +394,16 @@ export class GlassController {
       /* Titlebar pill buttons (like Search) and opaque badges in overlays */
       :root[data-hermes-skins-active="true"] [data-overlay-surface] [data-glass-opaque] {
         background-color: color-mix(in srgb, var(--ui-bg-chrome) 60%, transparent) !important;
-        backdrop-filter: blur(8px) !important;
-        -webkit-backdrop-filter: blur(8px) !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
         border-color: color-mix(in srgb, var(--ui-stroke-secondary) 60%, transparent) !important;
       }
       /* Radix dialogs and floating dialog contents */
       :root[data-hermes-skins-active="true"] [role="dialog"]:not([data-overlay-surface]),
       :root[data-hermes-skins-active="true"] [data-slot="dialog-content"] {
         background-color: var(--hermes-skins-overlay-tint) !important;
-        backdrop-filter: blur(20px) !important;
-        -webkit-backdrop-filter: blur(20px) !important;
+        backdrop-filter: var(--hermes-skins-overlay-frost) !important;
+        -webkit-backdrop-filter: var(--hermes-skins-overlay-frost) !important;
       }
       /* Terminal surfaces resolve through --ui-terminal-surface-background: the
          fixed persistent host paints it inline and the xterm canvas paints the
@@ -407,6 +449,9 @@ export class GlassController {
         -webkit-backdrop-filter: var(--hermes-skins-composer-frost);
       }
     `
+    if (this.styleEl.textContent !== css) this.styleEl.textContent = css
+    this.materialRule = this.styleEl.sheet?.cssRules?.[0]?.style || null
+    this.lastMaterialKey = materialKey
     this.syncTerminalRefitWatcher()
   }
 
@@ -442,13 +487,16 @@ export class GlassController {
   queueRefitNudge() {
     if (this.refitQueued) return
     this.refitQueued = true
-    setTimeout(() => {
+    this.refitTimer = setTimeout(() => {
+      this.refitTimer = null
       this.refitQueued = false
       if (typeof window !== 'undefined') window.dispatchEvent(new Event('resize'))
     }, 150)
   }
 
   releaseRefitWatcher() {
+    if (this.refitTimer !== null) clearTimeout(this.refitTimer)
+    this.refitTimer = null
     this.refitObserver?.disconnect()
     this.refitObserver = null
     this.refitTargets.clear()
