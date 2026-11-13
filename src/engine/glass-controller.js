@@ -4,6 +4,7 @@ const STYLE_ID = 'hermes-skins-runtime-css'
 // Sidebar, conversation and file views mount INSIDE it rather than beside it.
 const PANE_SURFACE = '[class*="bg-(--ui-editor-surface-background)"]'
 const NESTED_SURFACES = ':is([data-chat-surface], [data-slot="sidebar"], [data-panel-header], [class*="bg-(--ui-editor-surface-background)"], [class*="bg-(--ui-sidebar-surface-background)"], [class*="bg-(--ui-chat-surface-background)"])'
+const MESSAGE_BUBBLES = ':is(.composer-human-message, .standalone-glass, [class*="bg-(--dt-user-bubble)"], [class*="bg-(--ui-chat-bubble-background)"])'
 const PROTECTED_SURFACES = ':not(:where([data-glass-opaque], [data-glass-opaque] *, [data-glass-raised], [data-glass-raised] *, [data-overlay-surface], [data-overlay-surface] *, [data-floating-pane], [data-floating-pane] *, [data-remote-screen], [data-remote-screen] *, [data-radix-popper-content-wrapper] *, [role="dialog"], [role="dialog"] *, [role="menu"], [role="menu"] *, [role="listbox"], [role="listbox"] *))'
 const FLOATING_SURFACES = ':is([data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"], [data-slot="context-menu-content"], [data-slot="context-menu-sub-content"], [data-slot="select-content"], [data-slot="popover-content"], [data-slot="dialog-content"], [data-slot="alert-dialog-content"], [data-slot="sheet-content"], [data-slot="tooltip-content"], .tooltip-bubble, [role="menu"], [role="listbox"])'
 
@@ -338,6 +339,18 @@ export class GlassController {
            pill is the harshest leftover plate on a glass page. */
         --dt-background: var(--hermes-skins-chrome-tint);
         --ui-terminal-surface-background: ${terminalSurface};
+        --dt-user-bubble: transparent;
+      }
+      /* Chat messages sit inside a pane that already owns the shared glass
+         fill. Painting the message bubble again stacks a second 45% veil,
+         which reads as a different material from the terminal and file panes.
+         Keep the bubble border/shadow as its affordance and inherit the one
+         structural fill beneath it. */
+      :root[data-hermes-skins-active="true"] [data-chat-surface] ${MESSAGE_BUBBLES} {
+        background-color: transparent !important;
+        background-image: none !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
       }
       /* The wallpaper is a fixed child of body. The host also paints body with
          the chat token, then paints the chat/sidebars again. That makes a 55%
