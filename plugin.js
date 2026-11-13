@@ -1,50 +1,96 @@
 /**
- * Hermes Skin Center (hermes-skins)
- * Version: 1.3.7
- * Author: CaptainMusX (inspired by dsh-skins)
+ * Hermes Wallpaper Engine (hermes-skins)
+ * Version: 2.0.0
+ * Author: CaptainMusX
  *
  * Standalone Desktop Plugin for Hermes Desktop.
- * Provides skin gallery, custom wallpaper/video engine, glassmorphism translucency,
- * try-on/apply workflows, and theme studio.
+ * Provides the Wallpaper Engine library, Scene/Web/video/image rendering and
+ * liquid-glass surfaces, exposed from Settings ▸ Appearance.
  *
- * Third-party portions: dsh-skins, pinned at 82f42bd3bf91ea88475e59a2753f87041a960a56.
- * Copyright (c) 2026, zhu1090093659; historical notice: dsh-external contributors.
- * Changes in this generated file: vendor imports/exports removed and modules concatenated;
- * Local vendor changes add cursor/X-ray/shake support, remove cursor ripples, and bound
- * rendering/resource lifecycles, compile shaders on demand, reuse video allocations,
- * and track decoded frames. Additional Hermes adapters live in project-owned modules.
+ * Third-party portions: WebWallGL 3.0.1 (MIT, oneincase), the renderer page and
+ * layer/pointer/pause lifecycle adapted from dsh-wallpaper-engine (MIT, elysia395),
+ * and the legacy dsh-skins parser vendored for compatibility (82f42bd3).
+ * Changes in this generated file: third-party imports/exports removed and modules
+ * concatenated; scene rendering moved to the signed WebWallGL media origin.
  * See LICENSING.md, THIRD-PARTY-NOTICES.md and the accompanying complete license texts.
  */
 
 import {
-  atom, Badge, Button, host, Input,
-  PALETTE_AREA, ROUTES_AREA, SegmentedControl, SIDEBAR_NAV_AREA,
-  Switch, THEMES_AREA,
-  usePluginI18n, useTheme, useValue
+  APPEARANCE_AREAS, atom, Button, host, Input, pluginSettingsHref, SegmentedControl, Switch,
+  setAccentOverride, usePluginI18n, useValue
 } from '@hermes/plugin-sdk'
-import { useState, useEffect, useLayoutEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 // ─── Submodule: i18n ──────────────────────────────────────────
 const I18N_DICTIONARY = {
   en: {
-    pluginName: 'Hermes Skin Center',
-    pluginDesc: 'Skin gallery and optional wallpaper for Hermes Desktop',
-    tabGallery: 'Skin Gallery',
-    tabWallpaper: 'Wallpaper & Glass',
-    tabStudio: 'Theme Studio',
-    activeBadge: 'Active',
-    tryOnBadge: 'Trying On',
-    applyButton: 'Apply Skin',
-    tryOnButton: 'Try On',
-    exitTryOnButton: 'Exit Try-on',
-    resetToDefault: 'Official Default',
-    officialDefaultDesc: 'Return to the Hermes theme you used before this skin. A selected Wallpaper Engine wallpaper stays available.',
-    tryOnBannerTitle: name => `✨ Trying on: ${name}`,
-    tryOnBannerDesc: 'Changes are live in this window. Click Apply to keep it, or Exit to restore previous theme.',
-    applySuccess: 'Applied skin: {name}',
-    exitSuccess: 'Restored previous skin',
-    wallpaperControls: 'Wallpaper & Background Controls',
+    pluginName: 'Hermes Wallpaper Engine',
+    pluginDesc: 'Scene, Web, video and image wallpapers with liquid-glass surfaces',
+    wallpaperEngineTitle: 'Wallpaper Engine',
+    wallpaperEngineDesc: 'Scene, Web, video and image wallpapers behind Hermes, with liquid-glass surfaces.',
+    selectWallpaperFirst: 'Choose a wallpaper below to enable it.',
+    sectionGlass: 'Liquid glass',
+    sectionGlassDesc: 'Transparency, frost, tint and specular edges for Hermes surfaces.',
+    sectionPlayback: 'Playback',
+    sectionPlaybackDesc: 'Scene quality, frame cap and power-saving pause rules.',
+    sectionLibrary: 'Wallpaper library',
+    sectionLibraryDesc: 'Browse local Wallpaper Engine projects, videos and previews.',
+    sectionSystem: 'System',
+    sectionSystemDesc: 'Import or export the appearance/playback settings for another device.',
+    exportPreset: 'Export preset',
+    importPreset: 'Import preset',
+    presetExported: 'Preset exported.',
+    presetImported: 'Preset applied.',
+    presetInvalid: 'This file does not contain a valid Hermes wallpaper preset.',
+    defaultValue: 'Default',
+    sectionTypography: 'Typography',
+    sectionTypographyDesc: 'Global font family, size, weight, spacing and caret colour.',
+    fontCustom: 'Custom typography',
+    fontFamily: 'Font family',
+    fontFamilyPlaceholder: 'Inter, "Microsoft YaHei", sans-serif',
+    scanFonts: 'Scan system fonts',
+    fontScanning: 'Scanning fonts…',
+    fontSize: 'Chat font size',
+    fontWeight: 'Font weight',
+    letterSpacing: 'Letter spacing',
+    caretColor: 'Caret colour',
+    sectionFx: 'Click & trail',
+    sectionFxDesc: 'Pointer ripple and cursor trail drawn above the wallpaper and UI.',
+    fxEnabled: 'Enable pointer effects',
+    fxClick: 'Click effect',
+    fxClickStyle: 'Click style',
+    fxStyleRipple: 'Ripple',
+    fxStyleSpark: 'Spark',
+    fxClickSize: 'Click size',
+    fxClickGlow: 'Click glow',
+    fxTrail: 'Cursor trail',
+    fxTrailStyle: 'Trail style',
+    fxTrailComet: 'Comet',
+    fxTrailSparkle: 'Sparkle',
+    fxTrailLength: 'Trail lifetime',
+    fxTrailWidth: 'Trail width',
+    fxTrailGlow: 'Trail glow',
+    fxOpacity: 'Effect opacity',
+    fxBlend: 'Blend mode',
+    fxBlendScreen: 'Screen',
+    fxBlendNormal: 'Normal',
+    fxColorMode: 'Colour source',
+    fxColorAccent: 'Accent',
+    fxColorCustom: 'Custom',
+    fxColor: 'Effect colour',
+    sectionParallax: '3D parallax',
+    sectionParallaxDesc: 'Pointer-driven depth for the wallpaper and optional UI surfaces.',
+    parallaxEnabled: 'Enable 3D parallax',
+    parallaxBgDepth: 'Wallpaper depth',
+    parallaxUi: 'UI parallax',
+    parallaxUiChat: 'Chat depth',
+    parallaxUiComposer: 'Composer depth',
+    parallaxUiSidebar: 'Sidebar depth',
+    parallaxSmooth: 'Smoothing',
+    rotationEnabled: 'Auto rotation',
+    rotationInterval: 'Rotation interval',
+    rotationHint: 'Rotates through non-hidden library wallpapers while Hermes is running.',
     enableWallpaper: 'Enable Custom Wallpaper',
     enableWallpaperDesc: 'Render image or video background behind chat panels with glassmorphism',
     wallpaperType: 'Wallpaper Type',
@@ -82,6 +128,11 @@ const I18N_DICTIONARY = {
     weSceneBackendRestartRequired: 'The scene backend is enabled. Restart Hermes after current tasks finish to load its scene API, then select the wallpaper again.',
     weSceneUnsupported: 'This scene has no supported renderable layers or video.',
     weUse: 'Use as wallpaper',
+    weHide: 'Hide',
+    weRestore: 'Restore',
+    weRestoreAndUse: 'Restore & use',
+    weShowHidden: count => `Hidden (${count})`,
+    weShowVisible: count => `Wallpapers (${count} hidden)`,
     weSelected: 'Selected',
     weTypeVideo: 'Video',
     weTypeScene: 'Scene',
@@ -101,55 +152,105 @@ const I18N_DICTIONARY = {
     wallpaperFitCover: 'Cover',
     wallpaperFitContain: 'Contain',
     wallpaperFitFill: 'Fill',
+    wallpaperTransition: 'Wallpaper switch transition',
+    transitionCut: 'Cut',
+    transitionFade: 'Fade',
+    transitionSlide: 'Slide',
+    transitionZoom: 'Zoom',
     wallpaperOpacity: 'Wallpaper opacity',
     wallpaperOpacityDesc: 'Opacity of the wallpaper media layer (0% - 100%).',
     pauseOnHidden: 'Pause while Hermes is hidden',
+    pauseOnBlur: 'Pause when the window loses focus',
+    pauseOnBattery: 'Pause while on battery power',
+    sceneLive: 'Real-time scene rendering',
+    sceneLiveDesc: 'Render Scene and Web projects with WebWallGL instead of a static frame.',
+    sceneLiveFps: 'Scene frame-rate cap',
+    sceneAutoQuality: 'Automatic quality',
+    sceneAutoQualityDesc: 'Lower post-processing, particles and AA when the GPU cannot hold the frame cap.',
+    sceneRenderDpr: 'Render resolution',
+    sceneRenderDprAuto: 'Auto',
+    sceneVideoTexScale: 'Video texture scale',
+    sceneVideoTexScaleAuto: 'Auto',
+    sceneVideoTexScaleHalf: 'Half',
+    sceneVideoTexScaleFull: 'Full',
+    glassSaturation: 'Glass saturation',
+    glassSaturationDesc: 'Colour richness of the frosted surfaces (100% - 200%).',
+    glassBorder: 'Glass edge strength',
+    glassBorderDesc: 'Specular rim on structural glass surfaces (0% - 100%).',
+    glassHighlight: 'Glass top highlight',
     wallpaperSound: 'Play video sound',
     wallpaperVolume: 'Video volume',
     wallpaperVolumeDesc: 'Volume for standalone video wallpapers.',
-    themeStudioTitle: 'Custom Theme Studio',
-    themeStudioDesc: 'Create and customize your personalized color palette and typography',
-    accentColor: 'Accent Color',
-    backgroundColor: 'Background Color',
-    foregroundColor: 'Foreground Color',
-    cardColor: 'Card / Surface Color',
-    saveCustomSkin: 'Save as Custom Skin',
-    exportSkinJson: 'Export Skin JSON',
-    importSkinJson: 'Import Skin JSON',
-    skinJsonInvalid: 'Invalid skin JSON file.',
-    customSkinName: 'Custom Skin Name',
-    customSkinNamePlaceholder: 'My Custom Theme',
-    quickSwitchSkin: 'Quick Skin Switch',
-    statusBarTooltip: 'Hermes Skin Center — Click to customize appearance',
-    openGalleryPalette: 'Skin Center: Open Gallery',
-    toggleWallpaperPalette: 'Skin Center: Toggle Wallpaper',
-    tagsAll: 'All',
-    tagsArt: 'Illustration',
-    tagsAnime: 'Anime & Aesthetic',
-    tagsDark: 'Dark & Deep',
-    tagsLight: 'Light & Clean',
-    tagsCyber: 'Cyberpunk',
-    author: 'Author',
-    filterByTag: 'Filter by style'
+    videoPlaybackRate: 'Video playback speed',
+    tagsAll: 'All'
   },
   zh: {
-    pluginName: 'Hermes 皮肤中心',
-    pluginDesc: '为 Hermes Desktop 提供皮肤画廊与可选壁纸',
-    tabGallery: '皮肤画廊',
-    tabWallpaper: '壁纸与背景控制',
-    tabStudio: '主题工坊',
-    activeBadge: '当前使用',
-    tryOnBadge: '正在试穿',
-    applyButton: '应用皮肤',
-    tryOnButton: '试穿',
-    exitTryOnButton: '退出试穿',
-    resetToDefault: '官方默认',
-    officialDefaultDesc: '恢复使用此皮肤前的 Hermes 主题；已选用的 Wallpaper Engine 壁纸仍可继续使用。',
-    tryOnBannerTitle: name => `✨ 正在试穿：${name}`,
-    tryOnBannerDesc: '当前仅在当前窗口预览生效，未持久化。点击“应用”正式保存，或点击“退出试穿”恢复原状。',
-    applySuccess: '已成功应用皮肤：{name}',
-    exitSuccess: '已退出试穿并恢复原主题',
-    wallpaperControls: '壁纸与背景渲染设置',
+    pluginName: 'Hermes 壁纸引擎',
+    pluginDesc: 'Scene / Web / 视频 / 图片壁纸与液态玻璃界面',
+    wallpaperEngineTitle: '壁纸引擎',
+    wallpaperEngineDesc: '把 Scene、Web、视频与图片壁纸放到 Hermes 背后，并在界面表面叠加液态玻璃。',
+    selectWallpaperFirst: '请先在下方选择一张壁纸。',
+    sectionGlass: '液态玻璃',
+    sectionGlassDesc: '控制 Hermes 表面的透光、磨砂、染色与高光边缘。',
+    sectionPlayback: '播放',
+    sectionPlaybackDesc: '场景画质、帧率上限与省电暂停策略。',
+    sectionLibrary: '壁纸库',
+    sectionLibraryDesc: '浏览本机 Wallpaper Engine 工程、视频与预览。',
+    sectionSystem: '系统',
+    sectionSystemDesc: '导出或导入外观/播放设置，便于迁移到另一台设备。',
+    exportPreset: '导出预设',
+    importPreset: '导入预设',
+    presetExported: '预设已导出。',
+    presetImported: '预设已应用。',
+    presetInvalid: '这个文件不是有效的 Hermes 壁纸预设。',
+    defaultValue: '默认',
+    sectionTypography: '字体与排版',
+    sectionTypographyDesc: '全局字体、字号、字重、字距与光标颜色。',
+    fontCustom: '启用自定义排版',
+    fontFamily: '字体族',
+    fontFamilyPlaceholder: 'Inter, "Microsoft YaHei", sans-serif',
+    scanFonts: '扫描系统字体',
+    fontScanning: '正在扫描字体…',
+    fontSize: '聊天字号',
+    fontWeight: '字重',
+    letterSpacing: '字距',
+    caretColor: '光标颜色',
+    sectionFx: '点击与拖尾',
+    sectionFxDesc: '在壁纸和界面之上绘制鼠标点击波纹与拖尾。',
+    fxEnabled: '启用指针特效',
+    fxClick: '点击特效',
+    fxClickStyle: '点击样式',
+    fxStyleRipple: '波纹',
+    fxStyleSpark: '火花',
+    fxClickSize: '点击尺寸',
+    fxClickGlow: '点击辉光',
+    fxTrail: '鼠标拖尾',
+    fxTrailStyle: '拖尾样式',
+    fxTrailComet: '彗星',
+    fxTrailSparkle: '星点',
+    fxTrailLength: '拖尾存留',
+    fxTrailWidth: '拖尾宽度',
+    fxTrailGlow: '拖尾辉光',
+    fxOpacity: '特效不透明度',
+    fxBlend: '混合模式',
+    fxBlendScreen: '滤色',
+    fxBlendNormal: '正常',
+    fxColorMode: '颜色来源',
+    fxColorAccent: '主题色',
+    fxColorCustom: '自定义',
+    fxColor: '特效颜色',
+    sectionParallax: '3D 视差',
+    sectionParallaxDesc: '用鼠标驱动壁纸与可选界面表面的纵深位移。',
+    parallaxEnabled: '启用 3D 视差',
+    parallaxBgDepth: '壁纸深度',
+    parallaxUi: '界面视差',
+    parallaxUiChat: '聊天区深度',
+    parallaxUiComposer: '输入区深度',
+    parallaxUiSidebar: '侧栏深度',
+    parallaxSmooth: '平滑度',
+    rotationEnabled: '自动轮换',
+    rotationInterval: '轮换间隔',
+    rotationHint: '在 Hermes 运行期间，从未隐藏的壁纸库中依次切换。',
     enableWallpaper: '启用自定义壁纸',
     enableWallpaperDesc: '在会话窗口与面板背后渲染图片/视频壁纸，并启用毛玻璃透光质感',
     wallpaperType: '壁纸类型',
@@ -187,6 +288,11 @@ const I18N_DICTIONARY = {
     weSceneBackendRestartRequired: '场景后端已启用。请等待当前任务结束后重启 Hermes，以加载场景接口，再重新选择壁纸。',
     weSceneUnsupported: '此场景没有可支持的图层或视频。',
     weUse: '设为壁纸',
+    weHide: '隐藏',
+    weRestore: '恢复',
+    weRestoreAndUse: '恢复并应用',
+    weShowHidden: count => `已隐藏 (${count})`,
+    weShowVisible: count => `返回壁纸 (${count} 张已隐藏)`,
     weSelected: '已选用',
     weTypeVideo: '视频',
     weTypeScene: '场景',
@@ -206,583 +312,189 @@ const I18N_DICTIONARY = {
     wallpaperFitCover: '铺满',
     wallpaperFitContain: '完整显示',
     wallpaperFitFill: '拉伸填满',
+    wallpaperTransition: '壁纸切换过场',
+    transitionCut: '直接切换',
+    transitionFade: '淡入淡出',
+    transitionSlide: '横向推移',
+    transitionZoom: '缩放',
     wallpaperOpacity: '壁纸不透明度',
     wallpaperOpacityDesc: '调整壁纸素材层的不透明度 (0% - 100%)。',
     pauseOnHidden: 'Hermes 隐藏时暂停动画',
+    pauseOnBlur: '窗口失焦时暂停',
+    pauseOnBattery: '电池供电时暂停',
+    sceneLive: '场景实时渲染',
+    sceneLiveDesc: '使用 WebWallGL 实时渲染 Scene / Web 工程，而不是静态帧。',
+    sceneLiveFps: '场景帧率上限',
+    sceneAutoQuality: '自动画质',
+    sceneAutoQualityDesc: 'GPU 压不住帧率时自动降低后处理、粒子与抗锯齿。',
+    sceneRenderDpr: '渲染分辨率',
+    sceneRenderDprAuto: '自动',
+    sceneVideoTexScale: '视频纹理缩放',
+    sceneVideoTexScaleAuto: '自动',
+    sceneVideoTexScaleHalf: '一半',
+    sceneVideoTexScaleFull: '完整',
+    glassSaturation: '玻璃饱和度',
+    glassSaturationDesc: '磨砂表面的色彩浓度（100% - 200%）。',
+    glassBorder: '玻璃边缘强度',
+    glassBorderDesc: '结构玻璃表面的高光描边强度（0% - 100%）。',
+    glassHighlight: '玻璃顶部高光',
     wallpaperSound: '播放视频声音',
     wallpaperVolume: '视频音量',
     wallpaperVolumeDesc: '调整独立视频壁纸音量。',
-    themeStudioTitle: '自定义主题工坊',
-    themeStudioDesc: '自由调节专属配色方案，支持实时预览与保存为独立皮肤',
-    accentColor: '主强调色 (Accent)',
-    backgroundColor: '背景底色 (Background)',
-    foregroundColor: '主要文字色 (Foreground)',
-    cardColor: '卡片/表面色 (Card)',
-    saveCustomSkin: '保存为自定义皮肤',
-    exportSkinJson: '导出皮肤配置 (JSON)',
-    importSkinJson: '导入皮肤配置 (JSON)',
-    skinJsonInvalid: '皮肤 JSON 文件无效。',
-    customSkinName: '皮肤名称',
-    customSkinNamePlaceholder: '我的专属皮肤',
-    quickSwitchSkin: '快速换肤',
-    statusBarTooltip: 'Hermes 皮肤中心 — 点击快速配置外观与壁纸',
-    openGalleryPalette: '皮肤中心: 打开画廊',
-    toggleWallpaperPalette: '皮肤中心: 切换壁纸开关',
-    tagsAll: '全部风格',
-    tagsArt: '艺术插画',
-    tagsAnime: '角色美学',
-    tagsDark: '深色深邃',
-    tagsLight: '雅致浅色',
-    tagsCyber: '赛博科技',
-    author: '创作者',
-    filterByTag: '按风格筛选'
+    videoPlaybackRate: '视频播放速度',
+    tagsAll: '全部风格'
   }
 }
-
-// ─── Submodule: Catalog ───────────────────────────────────────
-/**
- * Built-in curated skins for Hermes Desktop.
- * Inspired by the best of dsh-skins (Blue Fantasy, Whale Song, Maid Atelier)
- * and tailored for Hermes desktop's glass & tailwind architecture.
- */
-
-// High quality embedded SVG wallpaper generators (offline-first, zero external latency)
-const WALLPAPER_PRESETS = {
-  'blue-fantasy': `data:image/svg+xml;utf8,${encodeURIComponent(`
-    <svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
-      <defs>
-        <radialGradient id="oceanBg" cx="30%" cy="40%" r="80%">
-          <stop offset="0%" stop-color="#16223f"/>
-          <stop offset="45%" stop-color="#0d1428"/>
-          <stop offset="100%" stop-color="#060914"/>
-        </radialGradient>
-        <linearGradient id="whaleGlow" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stop-color="#5a72cb" stop-opacity="0.6"/>
-          <stop offset="50%" stop-color="#38bdf8" stop-opacity="0.3"/>
-          <stop offset="100%" stop-color="#1e1b4b" stop-opacity="0"/>
-        </linearGradient>
-        <filter id="softGlow" x="-20%" y="-20%" width="140%" height="140%">
-          <feGaussianBlur stdDeviation="60" result="blur"/>
-        </filter>
-      </defs>
-      <rect width="1920" height="1080" fill="url(#oceanBg)"/>
-      <circle cx="450" cy="380" r="350" fill="url(#whaleGlow)" filter="url(#softGlow)"/>
-      <circle cx="1400" cy="700" r="280" fill="#4f46e5" fill-opacity="0.18" filter="url(#softGlow)"/>
-      <!-- Constellation and star dust -->
-      <g stroke="#93c5fd" stroke-opacity="0.4" stroke-width="1.2" fill="none">
-        <path d="M 200,280 L 320,240 L 450,300 L 580,260 L 720,350 L 850,310"/>
-        <path d="M 320,240 L 410,160 L 520,200 L 580,260"/>
-      </g>
-      <g fill="#bae6fd">
-        <circle cx="200" cy="280" r="3" opacity="0.8"/>
-        <circle cx="320" cy="240" r="4" opacity="0.9"/>
-        <circle cx="450" cy="300" r="3.5" opacity="0.85"/>
-        <circle cx="580" cy="260" r="4.5" opacity="1"/>
-        <circle cx="720" cy="350" r="3" opacity="0.7"/>
-        <circle cx="850" cy="310" r="4" opacity="0.9"/>
-        <circle cx="410" cy="160" r="2.5" opacity="0.75"/>
-        <circle cx="520" cy="200" r="3" opacity="0.8"/>
-        <circle cx="1100" cy="200" r="2" opacity="0.5"/>
-        <circle cx="1350" cy="150" r="2.5" opacity="0.6"/>
-        <circle cx="1600" cy="320" r="1.8" opacity="0.4"/>
-        <circle cx="1250" cy="500" r="2.2" opacity="0.5"/>
-      </g>
-      <!-- Stylized whale silhouette trace -->
-      <path d="M 280,480 C 400,320 680,310 920,410 C 1150,510 1350,470 1520,390 C 1450,490 1280,620 1020,640 C 780,660 520,620 400,560 C 330,530 250,560 190,580 C 220,530 250,500 280,480 Z"
-            fill="#38bdf8" fill-opacity="0.08" stroke="#60a5fa" stroke-opacity="0.25" stroke-width="2"/>
-    </svg>
-  `)}`,
-
-  'whale-song': `data:image/svg+xml;utf8,${encodeURIComponent(`
-    <svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
-      <defs>
-        <radialGradient id="deepOcean" cx="20%" cy="30%" r="90%">
-          <stop offset="0%" stop-color="#0b1b3d"/>
-          <stop offset="50%" stop-color="#071026"/>
-          <stop offset="100%" stop-color="#020612"/>
-        </radialGradient>
-        <radialGradient id="goldAura" cx="50%" cy="50%" r="50%">
-          <stop offset="0%" stop-color="#e0a94d" stop-opacity="0.35"/>
-          <stop offset="100%" stop-color="#e0a94d" stop-opacity="0"/>
-        </radialGradient>
-        <filter id="auroraGlow">
-          <feGaussianBlur stdDeviation="80"/>
-        </filter>
-      </defs>
-      <rect width="1920" height="1080" fill="url(#deepOcean)"/>
-      <circle cx="380" cy="320" r="300" fill="url(#goldAura)" filter="url(#auroraGlow)"/>
-      <circle cx="800" cy="500" r="420" fill="#38bdf8" fill-opacity="0.12" filter="url(#auroraGlow)"/>
-      <!-- Golden geometric lines -->
-      <g stroke="#f59e0b" stroke-opacity="0.35" stroke-width="1" fill="none">
-        <circle cx="380" cy="320" r="140" stroke-dasharray="4,8"/>
-        <circle cx="380" cy="320" r="220" stroke-opacity="0.2"/>
-        <line x1="80" y1="320" x2="680" y2="320" stroke-opacity="0.25"/>
-        <line x1="380" y1="20" x2="380" y2="620" stroke-opacity="0.25"/>
-      </g>
-    </svg>
-  `)}`,
-
-  'maid-atelier': `data:image/svg+xml;utf8,${encodeURIComponent(`
-    <svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
-      <defs>
-        <linearGradient id="palaceBg" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stop-color="#12182b"/>
-          <stop offset="50%" stop-color="#0c1020"/>
-          <stop offset="100%" stop-color="#070a14"/>
-        </linearGradient>
-        <radialGradient id="laceGlow" cx="25%" cy="35%" r="60%">
-          <stop offset="0%" stop-color="#c5a468" stop-opacity="0.22"/>
-          <stop offset="100%" stop-color="#c5a468" stop-opacity="0"/>
-        </radialGradient>
-      </defs>
-      <rect width="1920" height="1080" fill="url(#palaceBg)"/>
-      <circle cx="360" cy="360" r="360" fill="url(#laceGlow)" filter="blur(60px)"/>
-      <!-- Ornate delicate filigree frames -->
-      <g stroke="#d4af37" stroke-opacity="0.25" stroke-width="1.2" fill="none">
-        <rect x="40" y="40" width="1840" height="1000" rx="16" stroke-dasharray="12,12"/>
-        <circle cx="360" cy="360" r="160"/>
-        <circle cx="360" cy="360" r="170" stroke-dasharray="3,6"/>
-      </g>
-    </svg>
-  `)}`,
-
-  'cyberpunk-neon': `data:image/svg+xml;utf8,${encodeURIComponent(`
-    <svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
-      <defs>
-        <radialGradient id="cyberBg" cx="50%" cy="50%" r="80%">
-          <stop offset="0%" stop-color="#120c1f"/>
-          <stop offset="100%" stop-color="#05030a"/>
-        </radialGradient>
-        <filter id="neonBlur">
-          <feGaussianBlur stdDeviation="70"/>
-        </filter>
-      </defs>
-      <rect width="1920" height="1080" fill="url(#cyberBg)"/>
-      <circle cx="300" cy="300" r="280" fill="#00f0ff" fill-opacity="0.22" filter="url(#neonBlur)"/>
-      <circle cx="1500" cy="650" r="320" fill="#ff0055" fill-opacity="0.2" filter="url(#neonBlur)"/>
-      <!-- Grid perspective lines -->
-      <g stroke="#00f0ff" stroke-opacity="0.12" stroke-width="1">
-        <line x1="0" y1="800" x2="1920" y2="800"/>
-        <line x1="0" y1="880" x2="1920" y2="880"/>
-        <line x1="0" y1="940" x2="1920" y2="940"/>
-        <line x1="0" y1="980" x2="1920" y2="980"/>
-        <line x1="960" y1="750" x2="100" y2="1080"/>
-        <line x1="960" y1="750" x2="400" y2="1080"/>
-        <line x1="960" y1="750" x2="700" y2="1080"/>
-        <line x1="960" y1="750" x2="960" y2="1080"/>
-        <line x1="960" y1="750" x2="1220" y2="1080"/>
-        <line x1="960" y1="750" x2="1520" y2="1080"/>
-        <line x1="960" y1="750" x2="1820" y2="1080"/>
-      </g>
-    </svg>
-  `)}`,
-
-  'forest-obsidian': `data:image/svg+xml;utf8,${encodeURIComponent(`
-    <svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
-      <defs>
-        <radialGradient id="forestBg" cx="40%" cy="30%" r="85%">
-          <stop offset="0%" stop-color="#0a1a14"/>
-          <stop offset="60%" stop-color="#050e0a"/>
-          <stop offset="100%" stop-color="#020504"/>
-        </radialGradient>
-        <filter id="emeraldGlow">
-          <feGaussianBlur stdDeviation="90"/>
-        </filter>
-      </defs>
-      <rect width="1920" height="1080" fill="url(#forestBg)"/>
-      <circle cx="450" cy="350" r="320" fill="#10b981" fill-opacity="0.18" filter="url(#emeraldGlow)"/>
-      <circle cx="1300" cy="720" r="350" fill="#047857" fill-opacity="0.12" filter="url(#emeraldGlow)"/>
-    </svg>
-  `)}`,
-
-  'sakura-breeze': `data:image/svg+xml;utf8,${encodeURIComponent(`
-    <svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
-      <defs>
-        <linearGradient id="sakuraBg" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stop-color="#fdf2f8"/>
-          <stop offset="50%" stop-color="#fce7f3"/>
-          <stop offset="100%" stop-color="#fae8ff"/>
-        </linearGradient>
-        <filter id="softPetal">
-          <feGaussianBlur stdDeviation="40"/>
-        </filter>
-      </defs>
-      <rect width="1920" height="1080" fill="url(#sakuraBg)"/>
-      <circle cx="350" cy="280" r="240" fill="#f472b6" fill-opacity="0.25" filter="url(#softPetal)"/>
-      <circle cx="1400" cy="650" r="300" fill="#ec4899" fill-opacity="0.18" filter="url(#softPetal)"/>
-    </svg>
-  `)}`
-}
-
-const BUILTIN_SKINS = [
-  {
-    id: 'blue-fantasy',
-    name: '蓝色幻想',
-    nameEn: 'Blue Fantasy',
-    author: 'powerdog996 · DreamSkin 社区',
-    tagline: '深海巨鲸星海插画 · 靛蓝冷色调 · 晶莹半透明毛玻璃面板',
-    description: '源自 DSH 与 DreamSkin 社区最受欢迎的经典主题。深海鲸群在半透明面板之下游弋，长春花靛蓝色调赋予全界面沉浸感与优雅科技感。',
-    tags: ['art', 'anime', 'dark'],
-    accent: '#5a72cb',
-    wallpaper: WALLPAPER_PRESETS['blue-fantasy'],
-    wallpaperType: 'image',
-    defaultBlur: 4,
-    defaultOcclusion: 35,
-    colors: {
-      background: '#0d1428',
-      foreground: '#e2e8f0',
-      card: '#131d38',
-      cardForeground: '#f8fafc',
-      muted: '#1e293b',
-      mutedForeground: '#94a3b8',
-      popover: '#162244',
-      popoverForeground: '#f8fafc',
-      primary: '#5a72cb',
-      primaryForeground: '#ffffff',
-      secondary: '#253562',
-      secondaryForeground: '#e2e8f0',
-      accent: '#6366f1',
-      accentForeground: '#ffffff',
-      border: '#2a3b68',
-      input: '#1a264a',
-      ring: '#5a72cb',
-      userBubble: '#24325e'
-    },
-    darkColors: {
-      background: '#0a0f20',
-      foreground: '#e2e8f0',
-      card: '#101830',
-      cardForeground: '#f8fafc',
-      muted: '#18223f',
-      mutedForeground: '#8b9bb4',
-      popover: '#121c3b',
-      popoverForeground: '#f8fafc',
-      primary: '#5a72cb',
-      primaryForeground: '#ffffff',
-      secondary: '#1d2a52',
-      secondaryForeground: '#cbd5e1',
-      accent: '#6366f1',
-      accentForeground: '#ffffff',
-      border: '#23325c',
-      input: '#162244',
-      ring: '#5a72cb',
-      userBubble: '#1f2c58'
-    },
-    customCSS: `
-      /* Blue Fantasy special glass highlights */
-      [data-hermes-skins-active="true"] [data-slot="sidebar-wrapper"] {
-        border-right: 1px solid rgba(90, 114, 203, 0.22) !important;
-      }
-      [data-hermes-skins-active="true"] .hermes-skins-card-glow {
-        box-shadow: 0 0 20px rgba(90, 114, 203, 0.15);
-      }
-    `
-  },
-  {
-    id: 'whale-song',
-    name: '鲸吟',
-    nameEn: 'Whale Song',
-    author: 'dsh-web 官方设计',
-    tagline: '深海鲸语女神背景 · 冰蓝海洋调色板 · 金色微光点缀',
-    description: '深邃高冷的冰蓝海洋体系，结合神性金色细线高光。对话视口展现深海远航意境，兼具通透感与出色的文字阅读对比度。',
-    tags: ['art', 'anime', 'dark'],
-    accent: '#4d8fd4',
-    wallpaper: WALLPAPER_PRESETS['whale-song'],
-    wallpaperType: 'image',
-    defaultBlur: 5,
-    defaultOcclusion: 38,
-    colors: {
-      background: '#071026',
-      foreground: '#e0f2fe',
-      card: '#0c1a3a',
-      cardForeground: '#f0f9ff',
-      muted: '#14254b',
-      mutedForeground: '#7dd3fc',
-      popover: '#0f2048',
-      popoverForeground: '#f0f9ff',
-      primary: '#4d8fd4',
-      primaryForeground: '#ffffff',
-      secondary: '#1b3569',
-      secondaryForeground: '#e0f2fe',
-      accent: '#38bdf8',
-      accentForeground: '#082f49',
-      border: '#1e3a73',
-      input: '#11234a',
-      ring: '#4d8fd4',
-      userBubble: '#173062'
-    },
-    darkColors: {
-      background: '#040918',
-      foreground: '#e0f2fe',
-      card: '#08132c',
-      cardForeground: '#f0f9ff',
-      muted: '#0e1d3f',
-      mutedForeground: '#60a5fa',
-      popover: '#0a1736',
-      popoverForeground: '#f0f9ff',
-      primary: '#4d8fd4',
-      primaryForeground: '#ffffff',
-      secondary: '#132853',
-      secondaryForeground: '#bae6fd',
-      accent: '#38bdf8',
-      accentForeground: '#082f49',
-      border: '#182f61',
-      input: '#0c1c42',
-      ring: '#4d8fd4',
-      userBubble: '#12254e'
-    },
-    customCSS: `
-      [data-hermes-skins-active="true"] [data-slot="composer-rich-input"] {
-        border-color: rgba(77, 143, 212, 0.4) !important;
-      }
-    `
-  },
-  {
-    id: 'maid-atelier',
-    name: '深海女仆工坊',
-    nameEn: 'Abyssal Maid Atelier',
-    author: 'Small-tailqwq',
-    tagline: '香槟金与深海蓝蕾丝界面 · 华美典雅宫廷风',
-    description: '以深海蓝、柔金色与陶瓷白构筑的精致角色美学。金色边框点缀半透明面板，提供优雅奢华的会话交互体验。',
-    tags: ['anime', 'art', 'dark'],
-    accent: '#c5a468',
-    wallpaper: WALLPAPER_PRESETS['maid-atelier'],
-    wallpaperType: 'image',
-    defaultBlur: 6,
-    defaultOcclusion: 32,
-    colors: {
-      background: '#0c1020',
-      foreground: '#f1f5f9',
-      card: '#141a33',
-      cardForeground: '#ffffff',
-      muted: '#1f2747',
-      mutedForeground: '#cbd5e1',
-      popover: '#18203d',
-      popoverForeground: '#ffffff',
-      primary: '#c5a468',
-      primaryForeground: '#1a1405',
-      secondary: '#283256',
-      secondaryForeground: '#f8fafc',
-      accent: '#eab308',
-      accentForeground: '#000000',
-      border: '#3b3a58',
-      input: '#1a2244',
-      ring: '#c5a468',
-      userBubble: '#242b4d'
-    },
-    darkColors: {
-      background: '#070a14',
-      foreground: '#e2e8f0',
-      card: '#0f1428',
-      cardForeground: '#ffffff',
-      muted: '#181e36',
-      mutedForeground: '#94a3b8',
-      popover: '#131830',
-      popoverForeground: '#ffffff',
-      primary: '#c5a468',
-      primaryForeground: '#1a1405',
-      secondary: '#1f2644',
-      secondaryForeground: '#f1f5f9',
-      accent: '#d4af37',
-      accentForeground: '#000000',
-      border: '#2d334d',
-      input: '#141a33',
-      ring: '#c5a468',
-      userBubble: '#1b223d'
-    },
-    customCSS: `
-      [data-hermes-skins-active="true"] button:focus-visible {
-        outline-color: #c5a468 !important;
-      }
-    `
-  },
-  {
-    id: 'cyberpunk-neon',
-    name: '霓虹赛博 2077',
-    nameEn: 'Cyberpunk Neon',
-    author: 'Hermes Skin Lab',
-    tagline: '电光青蓝与霓虹粉 · 暗夜科技流光 · 高对比度',
-    description: '纯粹的夜之城科技美学。深黑底色配合高对比度电光青色与粉紫霓虹，代码与指令流光溢彩，为黑客与极客打造。',
-    tags: ['cyber', 'dark'],
-    accent: '#00f0ff',
-    wallpaper: WALLPAPER_PRESETS['cyberpunk-neon'],
-    wallpaperType: 'image',
-    defaultBlur: 3,
-    defaultOcclusion: 30,
-    colors: {
-      background: '#06040a',
-      foreground: '#00f0ff',
-      card: '#0f091a',
-      cardForeground: '#f8fafc',
-      muted: '#1f1133',
-      mutedForeground: '#a855f7',
-      popover: '#160c26',
-      popoverForeground: '#ffffff',
-      primary: '#00f0ff',
-      primaryForeground: '#05030a',
-      secondary: '#2d1247',
-      secondaryForeground: '#ff007f',
-      accent: '#ff007f',
-      accentForeground: '#ffffff',
-      border: '#3c1860',
-      input: '#160c26',
-      ring: '#00f0ff',
-      userBubble: '#240d3d'
-    },
-    darkColors: {
-      background: '#040207',
-      foreground: '#00f0ff',
-      card: '#0b0614',
-      cardForeground: '#f8fafc',
-      muted: '#170c26',
-      mutedForeground: '#9333ea',
-      popover: '#10081d',
-      popoverForeground: '#ffffff',
-      primary: '#00f0ff',
-      primaryForeground: '#05030a',
-      secondary: '#220d36',
-      secondaryForeground: '#ff007f',
-      accent: '#ff007f',
-      accentForeground: '#ffffff',
-      border: '#2c1047',
-      input: '#10081d',
-      ring: '#00f0ff',
-      userBubble: '#1b092e'
-    },
-    customCSS: `
-      [data-hermes-skins-active="true"] [data-slot="composer-rich-input"] {
-        box-shadow: 0 0 12px rgba(0, 240, 255, 0.25) !important;
-      }
-    `
-  },
-  {
-    id: 'forest-obsidian',
-    name: '黑曜翡翠',
-    nameEn: 'Forest Obsidian',
-    author: 'Hermes Skin Lab',
-    tagline: '静谧幽邃暗森林 · 松石翠绿强调色 · 沉浸护眼',
-    description: '深邃沉稳的暗夜森林调色，搭配清润柔和的翡翠绿光。长时间阅读与编码极度护眼舒适，静心凝神。',
-    tags: ['dark', 'art'],
-    accent: '#10b981',
-    wallpaper: WALLPAPER_PRESETS['forest-obsidian'],
-    wallpaperType: 'image',
-    defaultBlur: 4,
-    defaultOcclusion: 30,
-    colors: {
-      background: '#050e0a',
-      foreground: '#ecfdf5',
-      card: '#0b1b14',
-      cardForeground: '#f0fdf4',
-      muted: '#132820',
-      mutedForeground: '#6ee7b7',
-      popover: '#0e231a',
-      popoverForeground: '#f0fdf4',
-      primary: '#10b981',
-      primaryForeground: '#022c22',
-      secondary: '#19392c',
-      secondaryForeground: '#a7f3d0',
-      accent: '#34d399',
-      accentForeground: '#064e3b',
-      border: '#1f4838',
-      input: '#0e231a',
-      ring: '#10b981',
-      userBubble: '#153327'
-    },
-    darkColors: {
-      background: '#030806',
-      foreground: '#ecfdf5',
-      card: '#071510',
-      cardForeground: '#f0fdf4',
-      muted: '#0e2019',
-      mutedForeground: '#34d399',
-      popover: '#0a1b14',
-      popoverForeground: '#f0fdf4',
-      primary: '#10b981',
-      primaryForeground: '#022c22',
-      secondary: '#132e23',
-      secondaryForeground: '#6ee7b7',
-      accent: '#059669',
-      accentForeground: '#ffffff',
-      border: '#17392c',
-      input: '#0a1b14',
-      ring: '#10b981',
-      userBubble: '#0f271e'
-    },
-    customCSS: `
-      [data-hermes-skins-active="true"] .text-accent {
-        color: #10b981 !important;
-      }
-    `
-  },
-  {
-    id: 'sakura-breeze',
-    name: '落樱浅风',
-    nameEn: 'Sakura Breeze',
-    author: 'Hermes Skin Lab',
-    tagline: '温润粉白日式美学 · 樱花落雪 · 清新明丽',
-    description: '雅致明快的浅色主题。樱花粉点缀温润米白，面板温润如玉，适合喜爱明朗轻盈界面的创作者。',
-    tags: ['light', 'art'],
-    accent: '#ec4899',
-    wallpaper: WALLPAPER_PRESETS['sakura-breeze'],
-    wallpaperType: 'image',
-    defaultBlur: 6,
-    defaultOcclusion: 15,
-    colors: {
-      background: '#fdf2f8',
-      foreground: '#831843',
-      card: '#ffffff',
-      cardForeground: '#500724',
-      muted: '#fce7f3',
-      mutedForeground: '#9d174d',
-      popover: '#ffffff',
-      popoverForeground: '#500724',
-      primary: '#ec4899',
-      primaryForeground: '#ffffff',
-      secondary: '#fbcfe8',
-      secondaryForeground: '#700730',
-      accent: '#f43f5e',
-      accentForeground: '#ffffff',
-      border: '#f472b6',
-      input: '#fdf2f8',
-      ring: '#ec4899',
-      userBubble: '#fce7f3'
-    },
-    darkColors: {
-      background: '#1f0d18',
-      foreground: '#fce7f3',
-      card: '#2c1322',
-      cardForeground: '#ffffff',
-      muted: '#3b1c30',
-      mutedForeground: '#f472b6',
-      popover: '#331627',
-      popoverForeground: '#ffffff',
-      primary: '#f472b6',
-      primaryForeground: '#3d0a25',
-      secondary: '#4d203e',
-      secondaryForeground: '#fbcfe8',
-      accent: '#fb7185',
-      accentForeground: '#4c0519',
-      border: '#5c274a',
-      input: '#331627',
-      ring: '#f472b6',
-      userBubble: '#401933'
-    },
-    customCSS: `
-      [data-hermes-skins-active="true"] [data-slot="sidebar-wrapper"] {
-        background-color: rgba(253, 242, 248, 0.75) !important;
-      }
-    `
-  }
-]
 
 // ─── Submodule: Backdrop Manager ──────────────────────────────
+/**
+ * Thin client for the signed WebWallGL media service.
+ *
+ * The backend returns a tokenised project base; this module only builds the
+ * renderer URL and caches `open` results so a slider drag never re-signs the
+ * same project directory. No filesystem path reaches the iframe.
+ */
+const OPEN_TTL_MS = 10 * 60 * 1000
+const opened = new Map()
+let backendOriginCache = null
+
+const encodePath = value => String(value || 'index.html').replace(/\\/g, '/')
+  .split('/').filter(Boolean).map(encodeURIComponent).join('/')
+
+async function resolveBackendOrigin() {
+  if (backendOriginCache) return backendOriginCache
+  try {
+    const connection = await window.hermesDesktop?.getConnection?.()
+    if (connection?.baseUrl) {
+      backendOriginCache = String(connection.baseUrl).replace(/\/+$/, '')
+      return backendOriginCache
+    }
+  } catch { /* Plain browser / older host. */ }
+  backendOriginCache = typeof location !== 'undefined' && location.protocol !== 'file:'
+    ? location.origin : ''
+  return backendOriginCache
+}
+
+async function openLiveProject(openScene, { dir = null, manifestPath = null } = {}) {
+  if (typeof openScene !== 'function') throw new Error('Scene backend is unavailable')
+  const key = `${dir || ''}|${manifestPath || ''}`
+  const cached = opened.get(key)
+  if (cached && Date.now() - cached.at < OPEN_TTL_MS) return cached.value
+  const value = await openScene({ dir, manifestPath })
+  if (!value?.ok || !value.base || !value.token) {
+    throw new Error(value?.error || 'Scene backend refused this wallpaper')
+  }
+  opened.set(key, { at: Date.now(), value })
+  while (opened.size > 24) opened.delete(opened.keys().next().value)
+  return value
+}
+
+function liveSceneUrl(project, options = {}) {
+  if (!project?.token) throw new Error('Scene project has no media token')
+  const origin = project.mediaOrigin || options.origin ||
+    (typeof location !== 'undefined' && location.protocol !== 'file:' ? location.origin : '')
+  if (!origin) throw new Error('Hermes backend origin is unavailable')
+  const params = new URLSearchParams({
+    type: 'scene',
+    fit: options.fit || 'cover',
+    sceneFps: String(options.fps || 30),
+    muted: options.muted ? 'true' : 'false',
+    src: project.token,
+    mediaBase: `${origin}/api/plugins/hermes-skins/scene/files`
+  })
+  if (options.autoQuality === false) params.set('autoq', '0')
+  if (Number(options.renderDpr) > 0) params.set('renderDpr', String(options.renderDpr))
+  if (Number(options.videoTexScale) > 0) params.set('vidscale', String(options.videoTexScale))
+  return `${origin}/api/plugins/hermes-skins/scene/live/index.html?${params.toString()}`
+}
+
+function liveWebUrl(project, file, options = {}) {
+  if (!project?.base) throw new Error('Web project has no media base')
+  const origin = project.mediaOrigin || options.origin ||
+    (typeof location !== 'undefined' && location.protocol !== 'file:' ? location.origin : '')
+  if (!origin) throw new Error('Hermes backend origin is unavailable')
+  const base = /^https?:\/\//i.test(project.base) ? project.base : `${origin}${project.base}`
+  const entry = `${base}/${encodePath(file)}`
+  const params = new URLSearchParams({
+    type: 'web',
+    fit: options.fit || 'cover',
+    sceneFps: String(options.fps || 30),
+    muted: options.muted ? 'true' : 'false',
+    src: entry,
+    mediaBase: `${origin}/api/plugins/hermes-skins/scene/files`
+  })
+  if (options.autoQuality === false) params.set('autoq', '0')
+  return `${origin}/api/plugins/hermes-skins/scene/live/index.html?${params.toString()}`
+}
+
+function clearLiveProjectCache() {
+  opened.clear()
+}
+
 const ROOT_ID = 'hermes-skins-backdrop-root'
+const LIVE_READY_CLASS = 'hs-backdrop-live-ready'
+const LIVE_FADE_MS = 1200
+const LIVE_FIRST_FRAME_MS = 30000
+const TRANSITION_BASE_MS = {
+  cut: 0, fade: 1800, push: 700, wipe: 700, iris: 800, zoom: 900, bars: 800
+}
+const TRANSITION_SPEED_FACTOR = { fast: 0.6, normal: 1, slow: 1.6 }
+const BARS_TEETH = 9
+
+const clamp = (value, min, max, fallback) => {
+  const number = Number(value)
+  return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback
+}
+
+function barsPolygon(direction, progress) {
+  const horizontal = direction === 'left' || direction === 'right'
+  const fromEnd = direction === 'left' || direction === 'up'
+  const outer = fromEnd ? 1 : 0
+  const inward = fromEnd ? -1 : 1
+  const period = 1 / BARS_TEETH
+  const depth = clamp(progress, 0, 1, 0)
+  const spine = Math.min(0.004, depth)
+  const slat = depth / BARS_TEETH
+  const point = (a, t) => horizontal ? [outer + inward * a, t] : [t, outer + inward * a]
+  const points = [point(0, 0)]
+  for (let index = 0; index < BARS_TEETH; index += 1) {
+    const start = index * period
+    points.push(point(depth, start))
+    points.push(point(depth, start + slat))
+    if (index < BARS_TEETH - 1) {
+      points.push(point(spine, start + slat))
+      points.push(point(spine, start + period))
+    }
+  }
+  points.push(point(spine, 1))
+  points.push(point(0, 1))
+  return `polygon(${points.map(([x, y]) => `${(x * 100).toFixed(2)}% ${(y * 100).toFixed(2)}%`).join(', ')})`
+}
+
+function wipeInset(direction) {
+  return {
+    left: 'inset(0 100% 0 0)',
+    right: 'inset(0 0 0 100%)',
+    up: 'inset(100% 0 0 0)',
+    down: 'inset(0 0 100% 0)'
+  }[direction] || 'inset(0 100% 0 0)'
+}
+
+function pushOffset(direction, incoming = true) {
+  const sign = incoming ? 1 : -1
+  return {
+    left: `translate3d(${100 * sign}%, 0, 0)`,
+    right: `translate3d(${-100 * sign}%, 0, 0)`,
+    up: `translate3d(0, ${100 * sign}%, 0)`,
+    down: `translate3d(0, ${-100 * sign}%, 0)`
+  }[direction] || `translate3d(${100 * sign}%, 0, 0)`
+}
 
 function normalizeMediaSource(input, type = 'image') {
   if (typeof input !== 'string' || !input.trim()) return null
   const source = input.trim()
   if (/^https?:\/\//i.test(source)) return source
-  if (type === 'image' && /^data:image\/(svg\+xml|png|jpeg|webp);/i.test(source)) return source
+  if (type === 'image' && /^data:image\/(svg\+xml|png|jpeg|webp|gif);/i.test(source)) return source
   if (type === 'video' && /^hermes-media:\/\/stream\/[^\s?#]+$/i.test(source)) return source
   if (/^file:\/\/\//i.test(source)) return source
   if (/^[a-zA-Z]:[\\/]/.test(source)) {
@@ -793,55 +505,104 @@ function normalizeMediaSource(input, type = 'image') {
   return null
 }
 
-/** Fixed backdrop sits behind the app shell and never receives input. */
+const isScenePath = value => typeof value === 'string' && /^[a-zA-Z]:[\\/]/.test(value)
+
+function projectDirectory(value) {
+  if (typeof value !== 'string' || !value) return null
+  let path = value
+  if (/^file:\/\//i.test(path)) {
+    try {
+      path = decodeURIComponent(new URL(path).pathname)
+      if (/^\/[A-Za-z]:/.test(path)) path = path.slice(1)
+    } catch {
+      return null
+    }
+  }
+  path = path.replace(/\//g, '\\')
+  if (/\.(json|html?)$/i.test(path)) path = path.replace(/\\[^\\]+$/, '')
+  return /^[A-Za-z]:\\/.test(path) ? path : null
+}
+
+/**
+ * Wallpaper backdrop with a WebWallGL live renderer.
+ *
+ * Layer ownership is exclusive to this class. A switch builds the next layer
+ * beside the current one, fades it in, then retires the old iframe/video; the
+ * app never sees a transparent gap that would make glass lose its backdrop.
+ */
 class BackdropManager {
-  constructor({ prepareScene = null } = {}) {
+  constructor({ prepareScene = null, openScene = null } = {}) {
     this.prepareScene = prepareScene
+    this.openScene = openScene
     this.root = null
-    this.media = null
-    this.mask = null
+    this.layers = null
+    this.scrim = null
+    this.layer = null
+    this.previousLayer = null
+    this.sceneIframe = null
+    this.sceneProject = null
+    this.sceneType = null
+    this.liveReady = false
+    this.liveFailed = false
+    this.liveStarting = false
+    this.liveWatchdog = null
+    this.liveStats = null
     this.currentKey = null
+    this.currentOptions = null
     this.failedKeys = new Set()
     this.onVisibilityChange = null
-    this.sceneIframe = null
-    this.sceneManifest = null
-    this.sceneUrls = []
-    this.sceneLoad = null
-    this.sceneReloads = 0
-    this.sceneListeners = false
-    this.webIframe = null
+    this.onLiveState = null
+    this.onMediaEnd = null
+    this.pointerFrame = null
+    this.pendingPointer = null
+    this.pointerInitialized = false
     this.cursorForwardInit = false
-    this.cursorFrame = null
-    this.pendingCursor = null
-    this.videoElement = null
-    this.pauseOnHidden = true
-    this.fitValue = 'cover'
-    this.modeValue = 'live'
-    this.soundValue = false
-    this.volumeValue = 100
-    this.lastMediaOptions = null
-    this.cursorRects = new WeakMap()
+    this.pauseReasons = new Set()
+    this.battery = null
+    this.batteryPending = false
     this.lastMaskColor = null
+    this.mediaSnapshot = null
     this.handleSceneMessage = event => {
       if (!this.sceneIframe || event.source !== this.sceneIframe.contentWindow) return
-      if (event.data?.type === 'dsh-scene-failed') {
-        this.stopScene()
-        if (!this.media?.querySelector('img')) this.fail(this.currentKey)
-      } else if (event.data?.type === 'dsh-scene-needs-reload') {
-        // Repeated context loss must fall back instead of creating a reload loop.
-        if (this.sceneReloads++ >= 1) {
-          this.stopScene()
-          if (!this.media?.querySelector('img')) this.fail(this.currentKey)
-        } else this.sceneIframe.srcdoc = scenePlayerHtml(this.soundValue, this.volumeValue)
+      const data = event.data
+      if (!data || data.source !== 'hermes-skins-scene') return
+      if (data.type === 'ready') {
+        this.liveReady = true
+        this.liveFailed = false
+        if (this.liveWatchdog !== null) clearTimeout(this.liveWatchdog)
+        this.liveWatchdog = null
+        this.layer?.classList.add(LIVE_READY_CLASS)
+        this.applyLiveOptions(true)
+        this.pushMediaSnapshot()
+        this.onLiveState?.({ ready: true, type: this.sceneType })
+      } else if (data.type === 'error') {
+        this.liveFailed = true
+        if (this.liveWatchdog !== null) clearTimeout(this.liveWatchdog)
+        this.liveWatchdog = null
+        this.onLiveState?.({ ready: false, error: data.message || 'Scene renderer failed' })
+      } else if (data.type === 'stats') {
+        this.liveStats = data
       }
     }
     this.handleVisibility = () => {
-      if (document.hidden) this.onCursorLeave?.()
-      if (this.videoElement && this.pauseOnHidden) {
-        if (document.hidden) this.videoElement.pause()
-        else void this.videoElement.play()?.catch(() => {})
-      }
-      this.sceneIframe?.contentWindow?.postMessage({ type: 'dsh-set-pause', paused: document.hidden && this.pauseOnHidden }, '*')
+      if (document.hidden) this.pointerLeave()
+      this.syncPlayback()
+      this.onVisibilityChange?.()
+      if (!document.hidden) this.resumeDeferredLive()
+    }
+    this.handleFocus = () => {
+      this.syncPlayback()
+      this.onVisibilityChange?.()
+      this.resumeDeferredLive()
+    }
+    this.handleBlur = () => {
+      this.pointerLeave()
+      this.syncPlayback()
+      this.onVisibilityChange?.()
+    }
+    this.handleBattery = () => {
+      this.syncPlayback()
+      this.onVisibilityChange?.()
     }
   }
 
@@ -849,84 +610,158 @@ class BackdropManager {
     if (typeof document === 'undefined' || !document.body) return
     if (this.root?.isConnected) return
     this.root = document.getElementById(ROOT_ID) || document.createElement('div')
-    this.currentKey = null
-    this.lastMaskColor = null
     this.root.id = ROOT_ID
     this.root.setAttribute('aria-hidden', 'true')
-    this.root.style.cssText = 'position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden;'
-    this.media = document.createElement('div')
-    this.media.style.cssText = 'position:absolute;background-size:cover;background-position:center;background-repeat:no-repeat;'
-    this.mask = document.createElement('div')
-    this.mask.style.cssText = 'position:absolute;inset:0;'
-    this.root.replaceChildren(this.media, this.mask)
+    this.root.style.cssText = 'position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden;contain:strict;'
+    this.layers = document.createElement('div')
+    this.layers.style.cssText = 'position:absolute;inset:0;overflow:hidden;'
+    this.scrim = document.createElement('div')
+    this.scrim.style.cssText = 'position:absolute;inset:0;pointer-events:none;'
+    this.root.replaceChildren(this.layers, this.scrim)
     document.body.prepend(this.root)
-    this.ensureCursorForwarding()
+    this.ensureListeners()
   }
 
-  // Capture host movement without intercepting clicks. Deliver the newest
-  // sample once per animation frame, including the last event of a short drag.
-  ensureCursorForwarding() {
-    if (this.cursorForwardInit || typeof window === 'undefined') return
+  ensureListeners() {
+    if (this.pointerInitialized || typeof window === 'undefined') return
+    this.pointerInitialized = true
     this.cursorForwardInit = true
-    this.onCursorMove = event => {
-      if (document.hidden || (!this.sceneIframe && !this.webIframe)) return
-      this.pendingCursor = { x: event.clientX / Math.max(window.innerWidth, 1),
-        y: event.clientY / Math.max(window.innerHeight, 1) }
-      if (this.cursorFrame !== null) return
-      this.cursorFrame = window.requestAnimationFrame(() => {
-        this.cursorFrame = null
-        const cursor = this.pendingCursor
-        this.pendingCursor = null
-        if (cursor) this.forwardCursor(cursor.x, cursor.y, true)
+    this.onPointerMove = event => {
+      if (!this.sceneIframe || this.liveFailed || document.hidden) return
+      this.pendingPointer = {
+        x: event.clientX, y: event.clientY, buttons: event.buttons || 0,
+        mods: { shift: event.shiftKey, ctrl: event.ctrlKey, alt: event.altKey, meta: event.metaKey }
+      }
+      if (this.pointerFrame !== null) return
+      this.pointerFrame = window.requestAnimationFrame(() => {
+        this.pointerFrame = null
+        const sample = this.pendingPointer
+        this.pendingPointer = null
+        if (sample) this.forwardPointer(sample, true)
       })
     }
-    this.onCursorLeave = () => {
-      if (this.cursorFrame !== null) window.cancelAnimationFrame(this.cursorFrame)
-      this.cursorFrame = null
-      this.pendingCursor = null
-      this.forwardCursor(0.5, 0.5, false)
+    this.onPointerDown = event => {
+      if (!this.sceneIframe || this.liveFailed) return
+      this.forwardPointer({
+        x: event.clientX, y: event.clientY, buttons: event.buttons || 0,
+        mods: { shift: event.shiftKey, ctrl: event.ctrlKey, alt: event.altKey, meta: event.metaKey }
+      }, true)
     }
-    window.addEventListener('mousemove', this.onCursorMove, { passive: true, capture: true })
-    window.addEventListener('mouseleave', this.onCursorLeave)
-    document.addEventListener('mouseleave', this.onCursorLeave)
-    window.addEventListener('blur', this.onCursorLeave)
+    this.onPointerUp = this.onPointerDown
+    this.onPointerLeave = () => this.pointerLeave()
+    this.onWheel = event => {
+      if (!this.sceneIframe || this.liveFailed) return
+      this.postScene({ type: 'wheel', dx: event.deltaX, dy: event.deltaY, mode: event.deltaMode,
+        mods: { shift: event.shiftKey, ctrl: event.ctrlKey, alt: event.altKey, meta: event.metaKey } })
+    }
+    window.addEventListener('pointermove', this.onPointerMove, { passive: true, capture: true })
+    window.addEventListener('pointerdown', this.onPointerDown, { passive: true, capture: true })
+    window.addEventListener('pointerup', this.onPointerUp, { passive: true, capture: true })
+    window.addEventListener('pointerleave', this.onPointerLeave)
+    document.addEventListener('pointerleave', this.onPointerLeave)
+    window.addEventListener('blur', this.handleBlur)
+    window.addEventListener('focus', this.handleFocus)
+    window.addEventListener('wheel', this.onWheel, { passive: true, capture: true })
+    document.addEventListener('visibilitychange', this.handleVisibility)
+    window.addEventListener('message', this.handleSceneMessage)
+    if (typeof navigator !== 'undefined' && navigator.getBattery) {
+      this.batteryPending = true
+      navigator.getBattery().then(battery => {
+        this.battery = battery
+        battery.addEventListener('chargingchange', this.handleBattery)
+        battery.addEventListener('levelchange', this.handleBattery)
+        this.batteryPending = false
+        this.syncPlayback()
+      }).catch(() => { this.batteryPending = false })
+    }
   }
 
-  forwardCursor(x, y, active) {
-    const position = frame => {
-      if (!frame) return { x, y, active }
-      // The iframe is fixed inside the overscanned backdrop. Its geometry
-      // changes with viewport/blur, rather than with every mouse sample.
-      const geometryKey = `${window.innerWidth}:${window.innerHeight}:${this.media?.style.inset}`
-      let geometry = this.cursorRects.get(frame)
-      if (!geometry || geometry.key !== geometryKey) {
-        geometry = { key: geometryKey, rect: frame.getBoundingClientRect?.() }
-        this.cursorRects.set(frame, geometry)
-      }
-      const rect = geometry.rect
-      if (!rect?.width || !rect?.height) return { x, y, active }
-      const px = (x * window.innerWidth - rect.left) / rect.width
-      const py = (y * window.innerHeight - rect.top) / rect.height
-      return { x: Math.min(1, Math.max(0, px)), y: Math.min(1, Math.max(0, py)),
-        active: active && px >= 0 && px <= 1 && py >= 0 && py <= 1 }
-    }
-    try {
-      this.sceneIframe?.contentWindow?.postMessage({ type: 'dsh-set-cursor', ...position(this.sceneIframe) }, '*')
-    } catch { /* The scene frame may still be loading. */ }
-    try {
-      this.webIframe?.contentWindow?.postMessage({ type: 'hermes-we-cursor', ...position(this.webIframe) }, '*')
-    } catch { /* The web frame may still be loading. */ }
+  /** Compatibility alias for the pre-WebWallGL backdrop tests. */
+  ensureCursorForwarding() {
+    this.ensureListeners()
   }
 
-  update({ enabled, type = 'image', src, sceneFrame = null, webPreview = null, blur = 0, occlusion = 35,
-    isDark = true, mode = 'live', fit = 'cover', opacity = 100, pauseOnHidden = true, sound = false, volume = 100 }) {
-    const safeSource = enabled && type === 'scene' && /^[a-zA-Z]:[\\/]/.test(src)
-      ? src : (enabled ? normalizeMediaSource(src, type) : null)
-    if (!safeSource) {
+  /** Compatibility shim: forward a normalized pointer sample. */
+  forwardCursor(x, y, active = true) {
+    this.postScene({ type: 'pointer', u: x, v: y, buttons: active ? 1 : 0, mods: {} })
+  }
+
+  postScene(message) {
+    try {
+      this.sceneIframe?.contentWindow?.postMessage({ source: 'hermes-skins-host', ...message }, '*')
+    } catch { /* The frame may still be loading. */ }
+  }
+
+  forwardPointer(sample, active) {
+    const rect = this.sceneIframe?.getBoundingClientRect?.()
+    if (!rect?.width || !rect?.height) return
+    const u = Math.min(1, Math.max(0, (sample.x - rect.left) / rect.width))
+    const v = Math.min(1, Math.max(0, (sample.y - rect.top) / rect.height))
+    const inside = active && sample.x >= rect.left && sample.x <= rect.right &&
+      sample.y >= rect.top && sample.y <= rect.bottom
+    this.postScene({ type: 'pointer', u, v, buttons: inside ? sample.buttons : 0, mods: sample.mods })
+  }
+
+  pointerLeave() {
+    if (this.pointerFrame !== null) window.cancelAnimationFrame(this.pointerFrame)
+    this.pointerFrame = null
+    this.pendingPointer = null
+    this.postScene({ type: 'pointer-leave' })
+  }
+
+  setMediaSnapshot(media) {
+    this.mediaSnapshot = media && typeof media === 'object' ? media : null
+    this.pushMediaSnapshot()
+  }
+
+  pushMediaSnapshot() {
+    if (!this.sceneIframe) return
+    const media = this.mediaSnapshot
+    if (!media?.ok) {
+      this.postScene({ type: 'command', command: 'setMedia', args: [null] })
+      return
+    }
+    const status = String(media.playing || '').toLowerCase()
+    this.postScene({
+      type: 'command',
+      command: 'setMedia',
+      args: [{
+        hasMedia: true,
+        title: media.title || '',
+        artist: media.artist || '',
+        album: media.album || '',
+        playing: status === 'playing',
+        state: status === 'playing' ? 1 : status === 'paused' ? 2 : 0,
+        position: Number(media.position) || 0,
+        duration: Number(media.duration) || 0
+      }]
+    })
+  }
+
+  update(options) {
+    const {
+      enabled, type = 'image', src, sceneDir = null, sceneManifest = null,
+      sceneFrame = null, webPreview = null, blur = 0, occlusion = 35,
+      isDark = true, mode = 'live', fit = 'cover', opacity = 100,
+      pauseOnHidden = true, pauseOnBlur = false, pauseOnBattery = false,
+      sound = false, volume = 100, playbackRate = 1,
+      sceneLive = true, sceneLiveFps = 30, sceneAutoQuality = true,
+      sceneRenderDpr = 0, sceneVideoTexScale = 0,
+      slides = null, slideIntervalMs = null,
+      transition = 'fade', transitionDir = 'left', transitionSpeed = 'normal',
+      brightness = 100, contrast = 100, saturate = 100, flip = false,
+      layerPositionX = 50, layerPositionY = 50, layerScale = 100,
+      loop = true, userProps = null
+    } = options
+
+    const source = type === 'scene'
+      ? (isScenePath(sceneDir) ? sceneDir : (isScenePath(sceneManifest) ? sceneManifest : (isScenePath(src) ? src : null)))
+      : (enabled ? normalizeMediaSource(src, type) : null)
+    if (!enabled || !source) {
       this.hide()
       return false
     }
-    const key = `${type}:${safeSource}:${mode === 'frame' ? 'frame' : 'live'}`
+    const key = `${type}:${source}:${mode === 'frame' ? 'frame' : 'live'}`
     if (this.failedKeys.has(key)) {
       this.hide()
       return false
@@ -934,221 +769,436 @@ class BackdropManager {
     this.ensureElements()
     if (!this.root) return false
     this.root.style.display = 'block'
-    // The full contract range lives in config.js; only non-finite junk is
-    // coerced here. A legal 0 (no blur, fully transparent, silent) passes
-    // through untouched.
-    const blurValue = Number.isFinite(Number(blur)) ? Math.min(60, Math.max(0, Number(blur))) : 0
-    const writeStyle = (el, key, value) => { if (el.style[key] !== value) el.style[key] = value }
-    writeStyle(this.media, 'filter', blurValue > 0 ? `blur(${blurValue}px)` : 'none')
-    // Overscan the media box by the blur radius: gaussian sampling beyond the
-    // element edge would otherwise fade to the backdrop's absence (a white or
-    // theme-colored rim at large blurs). The mask keeps the viewport bounds.
-    writeStyle(this.media, 'inset', `-${blurValue + 8}px`)
-    writeStyle(this.media, 'opacity', `${(Number.isFinite(Number(opacity)) ? Math.min(100, Math.max(0, Number(opacity))) : 100) / 100}`)
-    this.fitValue = ['cover', 'contain', 'fill'].includes(fit) ? fit : 'cover'
-    this.modeValue = mode === 'frame' ? 'frame' : 'live'
-    this.pauseOnHidden = Boolean(pauseOnHidden)
-    this.soundValue = Boolean(sound)
-    this.volumeValue = Number.isFinite(Number(volume)) ? Math.min(100, Math.max(0, Number(volume))) : 100
-    // Endpoint honesty: occlusion 100 = the veil fully hides the wallpaper.
-    // The old Math.min(0.9, …) ceiling is gone — 1.0 is a legal, reachable end.
-    const alpha = (Number.isFinite(Number(occlusion)) ? Math.min(100, Math.max(0, Number(occlusion))) : 35) / 100
-    const maskColor = isDark ? `rgba(0,0,0,${alpha})` : `rgba(255,255,255,${alpha})`
-    if (this.lastMaskColor !== maskColor) this.mask.style.backgroundColor = maskColor
-    this.lastMaskColor = maskColor
-    if (key === this.currentKey) {
-      this.syncMediaOptions(type, { fit: this.fitValue, sound, volume, pauseOnHidden })
+    this.currentOptions = {
+      type, src: source, sceneDir, sceneManifest, sceneFrame, webPreview,
+      blur, occlusion, isDark, mode, fit, opacity, pauseOnHidden, pauseOnBlur,
+      pauseOnBattery, sound, volume, playbackRate, sceneLive,
+      sceneLiveFps, sceneAutoQuality, sceneRenderDpr, sceneVideoTexScale,
+      slides, slideIntervalMs,
+      transition, transitionDir, transitionSpeed,
+      brightness, contrast, saturate, flip,
+      layerPositionX, layerPositionY, layerScale, loop
+      , userProps
+    }
+    this.updateScrim(isDark, occlusion)
+    if (key === this.currentKey && this.layer) {
+      this.applyOptionsToLayer(this.layer)
+      this.applyLiveOptions(false)
+      this.syncPlayback()
       return true
     }
     this.currentKey = key
-    this.releaseMedia()
-    this.lastMediaOptions = null
-    this.sceneReloads = 0
-    this.sceneManifest = null
-    this.webIframe = null
-    this.media.replaceChildren()
-    this.media.style.backgroundImage = 'none'
-    if (type === 'scene') {
-      if (sceneFrame) this.showSceneFrame(sceneFrame, key, this.modeValue === 'frame')
-      if (this.modeValue === 'live') void this.showScene(key, safeSource)
-    } else if (type === 'web') {
-      if (webPreview) this.showSceneFrame(webPreview, key, this.modeValue === 'frame')
-      if (this.modeValue === 'live') void this.showWeb(key, safeSource, src)
-    } else if (type === 'video') {
-      const video = document.createElement('video')
-      video.onerror = () => this.fail(key)
-      video.src = safeSource
-      video.autoplay = true
-      video.loop = true
-      video.muted = !sound
-      video.volume = this.volumeValue / 100
-      video.playsInline = true
-      video.style.cssText = `width:100%;height:100%;object-fit:${this.fitValue};display:block;`
-      this.videoElement = video
-      this.ensurePlaybackListeners()
-      if (this.modeValue === 'frame') {
-      video.addEventListener('loadeddata', () => {
-          if (this.currentKey !== key || this.videoElement !== video) return
-          try {
-            const canvas = document.createElement('canvas')
-            const scale = Math.min(1, 1920 / Math.max(video.videoWidth, video.videoHeight))
-            canvas.width = Math.max(1, Math.round(video.videoWidth * scale))
-            canvas.height = Math.max(1, Math.round(video.videoHeight * scale))
-            canvas.getContext('2d')?.drawImage(video, 0, 0, canvas.width, canvas.height)
-            const image = document.createElement('img')
-            image.src = canvas.toDataURL('image/jpeg', 0.9)
-            image.style.cssText = `width:100%;height:100%;object-fit:${this.fitValue};display:block;`
-            if (this.currentKey === key) this.media.replaceChildren(image)
-          } catch { /* The live video remains visible if capture is blocked by CORS. */ }
-          finally { video.pause(); if (this.videoElement === video) this.videoElement = null }
-        }, { once: true })
-      }
-      this.media.appendChild(video)
-      video.play().catch(() => this.fail(key))
-    } else {
-      const image = document.createElement('img')
-      image.alt = ''
-      let triedBridge = false
-      image.onerror = async () => {
-        const local = /^[a-zA-Z]:[\\/]/.test(src) || /^file:\/\/\//i.test(src)
-        const bridge = typeof window !== 'undefined' ? window.hermesDesktop : null
-        if (!triedBridge && local && bridge?.readFileDataUrl) {
-          triedBridge = true
-          try {
-            const data = await bridge.readFileDataUrl(src)
-            if (this.currentKey !== key) return
-            if (typeof data === 'string' && data.startsWith('data:image/')) {
-              image.src = data
-              return
-            }
-          } catch { /* Invalid or oversized local image. */ }
-        }
-        this.fail(key)
-      }
-      image.src = safeSource
-      image.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;'
-      this.media.appendChild(image)
-    }
+    this.buildNextLayer(this.currentOptions, key)
     return true
   }
 
-  syncMediaOptions(type, options) {
-    const optionsKey = `${type}:${options.fit}:${options.sound}:${options.volume}:${options.pauseOnHidden}`
-    if (this.lastMediaOptions === optionsKey) return
-    this.lastMediaOptions = optionsKey
-    const video = this.media?.querySelector('video')
-    if (video) {
-      video.style.objectFit = options.fit
-      video.muted = !options.sound
-      video.volume = (Number.isFinite(Number(options.volume)) ? Math.min(100, Math.max(0, Number(options.volume))) : 100) / 100
-      this.handleVisibility()
-    }
-    if (type === 'scene') {
-      this.sceneIframe?.contentWindow?.postMessage({ type: 'dsh-set-fit', fit: options.fit }, '*')
-      this.sceneIframe?.contentWindow?.postMessage({
-        type: 'dsh-set-pause', paused: document.hidden && options.pauseOnHidden
-      }, '*')
-      this.sceneIframe?.contentWindow?.postMessage({
-        type: 'dsh-set-audio', sound: options.sound, volume: options.volume
-      }, '*')
-    }
-    const frame = this.media?.querySelector('iframe')
-    if (frame && type === 'web') frame.style.objectFit = options.fit
+  updateScrim(isDark, occlusion) {
+    const alpha = clamp(occlusion, 0, 100, 35) / 100
+    const color = isDark ? `rgba(0,0,0,${alpha})` : `rgba(255,255,255,${alpha})`
+    if (this.lastMaskColor !== color) this.scrim.style.backgroundColor = color
+    this.lastMaskColor = color
   }
 
-  showSceneFrame(framePath, key, freeze = false) {
+  buildLayer() {
+    const layer = document.createElement('div')
+    layer.className = 'hs-backdrop-layer'
+    layer.style.cssText = 'position:absolute;inset:0;overflow:hidden;opacity:0;'
+    const surface = document.createElement('div')
+    surface.className = 'hs-backdrop-surface'
+    surface.style.cssText = 'position:absolute;inset:0;transform-origin:center;'
+    const poster = document.createElement('div')
+    poster.className = 'hs-backdrop-poster'
+    poster.style.cssText = 'position:absolute;inset:0;background-size:cover;background-position:center;background-repeat:no-repeat;'
+    const media = document.createElement('div')
+    media.className = 'hs-backdrop-media'
+    media.style.cssText = 'position:absolute;inset:0;overflow:hidden;'
+    surface.appendChild(poster)
+    surface.appendChild(media)
+    layer.appendChild(surface)
+    layer._surface = surface
+    layer._poster = poster
+    layer._media = media
+    return layer
+  }
+
+  applyOptionsToLayer(layer) {
+    const options = this.currentOptions
+    const blur = clamp(options.blur, 0, 60, 0)
+    const surface = layer._surface
+    const media = layer._media
+    const brightness = clamp(options.brightness, 40, 160, 100)
+    const contrast = clamp(options.contrast, 40, 200, 100)
+    const saturate = clamp(options.saturate, 0, 200, 100)
+    const filters = []
+    if (blur > 0) filters.push(`blur(${blur}px)`)
+    if (brightness !== 100) filters.push(`brightness(${brightness}%)`)
+    if (contrast !== 100) filters.push(`contrast(${contrast}%)`)
+    if (saturate !== 100) filters.push(`saturate(${saturate}%)`)
+    surface.style.filter = filters.length ? filters.join(' ') : 'none'
+    surface.style.inset = blur > 0 ? `-${blur + 8}px` : '0'
+    const x = (50 - clamp(options.layerPositionX, 0, 100, 50)) / 2
+    const y = (50 - clamp(options.layerPositionY, 0, 100, 50)) / 2
+    const scale = clamp(options.layerScale, 50, 150, 100) / 100
+    const flip = options.flip ? ' scaleX(-1)' : ''
+    layer.style.transform = 'none'
+    surface.style.transform = `translate3d(${x.toFixed(2)}%, ${y.toFixed(2)}%, 0) scale(${scale.toFixed(3)})${flip}`
+    media.style.opacity = String(clamp(options.opacity, 0, 100, 100) / 100)
+    layer._poster.style.opacity = String(clamp(options.opacity, 0, 100, 100) / 100)
+    const images = media.querySelectorAll
+      ? [...media.querySelectorAll('img')]
+      : [media.querySelector('img')].filter(Boolean)
+    const objectFit = options.fit === 'center' ? 'none' : options.fit
+    images.forEach(image => {
+      image.style.objectFit = objectFit
+      image.style.objectPosition = 'center'
+    })
+    const video = media.querySelector('video')
+    if (video) {
+      video.style.objectFit = objectFit
+      video.style.objectPosition = 'center'
+      video.muted = !options.sound
+      video.volume = clamp(options.volume, 0, 100, 100) / 100
+      video.playbackRate = clamp(options.playbackRate, 0.25, 2, 1)
+      video.loop = options.loop !== false
+    }
+  }
+
+  buildNextLayer(options, key) {
+    const next = this.buildLayer()
+    this.applyOptionsToLayer(next)
+    this.applyPoster(next, options)
+    this.appendContent(next, options, key)
+    this.transitionTo(next, options, key)
+  }
+
+  applyPoster(layer, options) {
+    const path = options.type === 'scene' ? options.sceneFrame : options.webPreview
+    if (!path) return
+    const bridge = typeof window !== 'undefined' ? window.hermesDesktop : null
+    if (!bridge?.readFileDataUrl) return
     const image = document.createElement('img')
     image.alt = ''
-    image.style.cssText = `position:absolute;inset:0;width:100%;height:100%;object-fit:${this.fitValue};display:block;`
-    if (freeze) image.onload = () => {
-      try {
-        const canvas = document.createElement('canvas')
-        canvas.width = Math.max(1, image.naturalWidth)
-        canvas.height = Math.max(1, image.naturalHeight)
-        canvas.getContext('2d')?.drawImage(image, 0, 0)
-        image.src = canvas.toDataURL('image/png')
-        image.onload = null
-      } catch { /* Keep the source preview as a fallback. */ }
-    }
-    const bridge = typeof window !== 'undefined' ? window.hermesDesktop : null
-    const load = async () => {
-      try {
-        const data = await bridge.readFileDataUrl(framePath)
-        if (this.currentKey === key) image.src = data
-      } catch {
-        try {
-          const data = await bridge.readFileDataUrlForAttach?.(framePath)
-          if (this.currentKey === key && data) image.src = data
-        } catch { /* Live scene may still load without a backing frame. */ }
-      }
-    }
-    if (bridge?.readFileDataUrl) void load()
-    this.media.appendChild(image)
+    image.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;'
+    image.onerror = () => image.remove()
+    bridge.readFileDataUrl(path).then(data => {
+      if (typeof data === 'string' && data.startsWith('data:image/')) image.src = data
+    }).catch(() => image.remove())
+    layer._poster.appendChild(image)
   }
 
-  async showScene(key, manifestPath) {
-    const bridge = typeof window !== 'undefined' ? window.hermesDesktop : null
-    const load = new AbortController()
-    this.sceneLoad = load
-    try {
-      const scene = await loadSceneManifest(bridge, manifestPath, this.prepareScene, load.signal)
-      if (load.signal.aborted || this.currentKey !== key) {
-        scene.objectUrls.forEach(url => URL.revokeObjectURL(url))
-        return
+  appendContent(layer, options, key) {
+    if (options.type === 'scene' || options.type === 'web') {
+      if (options.mode !== 'frame' && options.sceneLive) {
+        if (document.hidden) layer.dataset.liveState = 'deferred'
+        else void this.showLive(layer, options, key)
       }
+      return
+    }
+    if (options.type === 'video') {
+      this.showVideo(layer, options, key)
+      return
+    }
+    this.showImage(layer, options, key)
+  }
+
+  showImage(layer, options, key) {
+    if (Array.isArray(options.slides) && options.slides.length > 1) {
+      const wrap = document.createElement('div')
+      wrap.style.cssText = 'position:absolute;inset:0;overflow:hidden;'
+      const first = document.createElement('img')
+      const second = document.createElement('img')
+      for (const image of [first, second]) {
+        image.alt = ''
+        const fit = options.fit === 'center' ? 'none' : options.fit
+        image.style.cssText = `position:absolute;inset:0;width:100%;height:100%;object-fit:${fit};object-position:center;display:block;transition:opacity 800ms ease;`
+        wrap.appendChild(image)
+      }
+      first.src = normalizeMediaSource(options.slides[0], 'image') || options.slides[0]
+      first.style.opacity = '1'
+      second.style.opacity = '0'
+      layer._media.appendChild(wrap)
+      let index = 0
+      const interval = clamp(options.slideIntervalMs, 1000, 24 * 60 * 60 * 1000, 60_000)
+      layer._slideTimer = setInterval(() => {
+        if (this.currentKey !== key) return
+        index += 1
+        const incoming = index % 2 === 0 ? first : second
+        const outgoing = index % 2 === 0 ? second : first
+        incoming.onload = () => {
+          if (this.currentKey !== key) return
+          incoming.style.opacity = '1'
+          outgoing.style.opacity = '0'
+        }
+        incoming.src = normalizeMediaSource(options.slides[index % options.slides.length], 'image') ||
+          options.slides[index % options.slides.length]
+      }, interval)
+      return
+    }
+    const image = document.createElement('img')
+    image.alt = ''
+    const fit = options.fit === 'center' ? 'none' : options.fit
+    image.style.cssText = `width:100%;height:100%;object-fit:${fit};object-position:center;display:block;`
+    let triedBridge = false
+    image.onerror = async () => {
+      const local = /^[a-zA-Z]:[\\/]/.test(options.src) || /^file:\/\/\//i.test(options.src)
+      const bridge = typeof window !== 'undefined' ? window.hermesDesktop : null
+      if (!triedBridge && local && bridge?.readFileDataUrl) {
+        triedBridge = true
+        try {
+          const data = await bridge.readFileDataUrl(options.src)
+          if (this.currentKey === key && typeof data === 'string' && data.startsWith('data:image/')) {
+            image.src = data
+            return
+          }
+        } catch { /* Invalid or oversized local image. */ }
+      }
+      this.fail(key)
+    }
+    image.src = options.src
+    layer._media.appendChild(image)
+  }
+
+  showVideo(layer, options, key) {
+    const video = document.createElement('video')
+    video.autoplay = true
+    video.loop = options.loop !== false
+    video.playsInline = true
+    video.preload = 'auto'
+    video.muted = !options.sound
+    video.volume = clamp(options.volume, 0, 100, 100) / 100
+    video.playbackRate = clamp(options.playbackRate, 0.25, 2, 1)
+    const fit = options.fit === 'center' ? 'none' : options.fit
+    video.style.cssText = `width:100%;height:100%;object-fit:${fit};object-position:center;display:block;`
+    video.onerror = () => this.fail(key)
+    video.onended = () => {
+      if (this.currentKey === key && options.loop === false) this.onMediaEnd?.()
+    }
+    video.src = options.src
+    layer._media.appendChild(video)
+    if (options.mode === 'frame') {
+      video.addEventListener('loadeddata', () => {
+        if (this.currentKey !== key) return
+        try {
+          const canvas = document.createElement('canvas')
+          const scale = Math.min(1, 1920 / Math.max(video.videoWidth, video.videoHeight))
+          canvas.width = Math.max(1, Math.round(video.videoWidth * scale))
+          canvas.height = Math.max(1, Math.round(video.videoHeight * scale))
+          canvas.getContext('2d')?.drawImage(video, 0, 0, canvas.width, canvas.height)
+          const image = document.createElement('img')
+          image.src = canvas.toDataURL('image/jpeg', 0.9)
+          image.style.cssText = `width:100%;height:100%;object-fit:${options.fit === 'center' ? 'none' : options.fit};object-position:center;display:block;`
+          if (this.currentKey === key) layer._media.replaceChildren(image)
+        } catch { /* Keep the live video if capture is blocked. */ }
+        finally { video.pause() }
+      }, { once: true })
+    }
+    void video.play().catch(error => {
+      // Chromium rejects play() with AbortError when a hidden/occluded window
+      // pauses background media to save power; that is not a broken wallpaper.
+      if (error?.name === 'AbortError' || error?.name === 'NotAllowedError') return
+      if (this.currentKey === key) this.fail(key)
+    })
+  }
+
+  async showLive(layer, options, key) {
+    if (document.hidden) {
+      layer.dataset.liveState = 'deferred'
+      return
+    }
+    if (this.liveStarting) return
+    this.liveStarting = true
+    layer.dataset.liveState = 'starting'
+    if (typeof this.openScene !== 'function') {
+      this.liveFailed = true
+      layer.dataset.liveState = 'error:no-backend'
+      this.liveStarting = false
+      return
+    }
+    this.liveReady = false
+    this.liveFailed = false
+    try {
+      const project = await openLiveProject(this.openScene, {
+        dir: options.sceneDir || projectDirectory(options.src),
+        manifestPath: options.sceneManifest
+      })
+      if (this.currentKey !== key) return
+      layer.dataset.liveState = 'opened'
+      this.sceneProject = project
+      this.sceneType = options.type
+      const origin = project.mediaOrigin || await resolveBackendOrigin()
+      const muted = !options.sound || clamp(options.volume, 0, 100, 100) <= 0
+      const url = options.type === 'scene'
+        ? liveSceneUrl(project, {
+            origin,
+            fit: options.fit, fps: options.sceneLiveFps, muted,
+            autoQuality: options.sceneAutoQuality, renderDpr: options.sceneRenderDpr,
+            videoTexScale: options.sceneVideoTexScale
+          })
+        : liveWebUrl(project, project.file, {
+            origin,
+            fit: options.fit, fps: options.sceneLiveFps, muted,
+            autoQuality: options.sceneAutoQuality
+          })
       const frame = document.createElement('iframe')
-      // The srcdoc contains only the vendored player code. Shared origin lets
-      // its WebGL video textures consume the parent's Blob URLs safely.
       frame.setAttribute('sandbox', 'allow-scripts allow-same-origin')
+      frame.setAttribute('allow', 'autoplay; fullscreen')
       frame.setAttribute('aria-hidden', 'true')
-      frame.style.cssText = `position:absolute;inset:0;width:100%;height:100%;border:0;pointer-events:none;object-fit:${this.fitValue};`
+      frame.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:0;background:transparent;opacity:0;transition:opacity 1200ms ease;'
       frame.onload = () => {
         if (this.sceneIframe !== frame) return
-        frame.contentWindow?.postMessage({ type: 'hermes-scene-manifest', manifest: scene.manifest }, '*')
-        frame.contentWindow?.postMessage({ type: 'dsh-set-fit', fit: this.fitValue }, '*')
-        frame.contentWindow?.postMessage({ type: 'dsh-set-pause', paused: document.hidden && this.pauseOnHidden }, '*')
+        this.applyLiveOptions(true)
+        this.syncPlayback()
       }
       this.sceneIframe = frame
-      this.sceneManifest = scene.manifest
-      this.sceneUrls = scene.objectUrls
-      if (!this.sceneListeners) {
-        this.ensurePlaybackListeners()
-      }
-      frame.srcdoc = scenePlayerHtml(this.soundValue, this.volumeValue)
-      this.media.appendChild(frame)
-      this.onVisibilityChange?.()
-    } catch {
-      // A decoded full-resolution frame remains visible if the WebGL scene
-      // cannot be prepared by this Hermes build.
-      if (!load.signal.aborted && this.currentKey === key && !this.media?.querySelector('img')) this.fail(key)
+      this.liveWatchdog = setTimeout(() => {
+        this.liveWatchdog = null
+        if (this.sceneIframe !== frame || this.liveReady) return
+        this.liveFailed = true
+        this.onLiveState?.({ ready: false, error: 'Scene renderer did not produce a frame in time' })
+      }, LIVE_FIRST_FRAME_MS)
+      frame.src = url
+      layer._media.appendChild(frame)
+      layer.dataset.liveState = 'framed'
+    } catch (error) {
+      this.liveFailed = true
+      layer.dataset.liveState = `error:${String(error?.message || error).slice(0, 120)}`
+      this.onLiveState?.({ ready: false, error: String(error?.message || error) })
     } finally {
-      if (this.sceneLoad === load) this.sceneLoad = null
+      this.liveStarting = false
     }
   }
 
-  ensurePlaybackListeners() {
-    if (this.sceneListeners || typeof window === 'undefined') return
-    window.addEventListener('message', this.handleSceneMessage)
-    document.addEventListener('visibilitychange', this.handleVisibility)
-    this.sceneListeners = true
+  resumeDeferredLive() {
+    const options = this.currentOptions
+    const layer = this.layer
+    if (!options || !layer || !this.currentKey || document.hidden) return
+    if (options.type !== 'scene' && options.type !== 'web') return
+    if (!options.sceneLive || options.mode === 'frame' || this.sceneIframe) return
+    if (layer.dataset.liveState !== 'deferred' && layer.dataset.liveState !== 'idle') return
+    void this.showLive(layer, options, this.currentKey)
   }
 
-  async showWeb(key, fileUrl, sourcePath) {
-    const bridge = typeof window !== 'undefined' ? window.hermesDesktop : null
-    try {
-      const html = await loadWebWallpaper(bridge, sourcePath)
-      if (this.currentKey !== key) return
-      const frame = document.createElement('iframe')
-      frame.setAttribute('sandbox', 'allow-scripts')
-      frame.setAttribute('aria-hidden', 'true')
-      frame.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:0;pointer-events:none;'
-      frame.style.objectFit = this.fitValue
-      frame.srcdoc = html
-      this.webIframe = frame
-      this.media.appendChild(frame)
-    } catch {
-      if (this.currentKey === key && !this.media.querySelector('img')) this.fail(key)
+  applyLiveOptions(force = false) {
+    if (!this.sceneIframe || (!this.liveReady && !force)) return
+    const options = this.currentOptions
+    const muted = !options.sound || clamp(options.volume, 0, 100, 100) <= 0
+    this.postScene({ type: 'command', command: 'setFit', args: [options.fit] })
+    this.postScene({ type: 'command', command: 'setSceneFps', args: [options.sceneLiveFps] })
+    this.postScene({ type: 'command', command: 'setVolume', args: [muted ? 0 : clamp(options.volume, 0, 100, 100) / 100] })
+    this.postScene({ type: 'command', command: 'setRenderDpr', args: [options.sceneRenderDpr] })
+    if (!options.sceneAutoQuality) this.postScene({ type: 'command', command: 'setQuality', args: [{ autoQuality: false }] })
+    if (options.userProps && typeof options.userProps === 'object') {
+      this.postScene({ type: 'command', command: 'updateWebProps', args: [options.userProps] })
     }
+    if (this.liveReady) {
+      this.sceneIframe.style.opacity = String(clamp(options.opacity, 0, 100, 100) / 100)
+      this.layer?.classList.add(LIVE_READY_CLASS)
+      const poster = this.layer?._poster
+      if (poster) {
+        poster.style.transition = `opacity 300ms ease ${LIVE_FADE_MS}ms`
+        poster.style.opacity = '0'
+      }
+    }
+    this.pushMediaSnapshot()
+  }
+
+  syncPlayback() {
+    if (typeof document === 'undefined') return
+    const options = this.currentOptions
+    if (!options) return
+    const hiddenPaused = options.pauseOnHidden && document.hidden
+    const blurPaused = options.pauseOnBlur && typeof document.hasFocus === 'function' && !document.hasFocus()
+    const batteryPaused = options.pauseOnBattery && this.battery && !this.battery.charging
+    const paused = Boolean(hiddenPaused || blurPaused || batteryPaused)
+    const video = this.layer?._media?.querySelector('video')
+    if (video) {
+      if (paused) video.pause()
+      else void video.play().catch(() => {})
+    }
+    if (this.sceneIframe) {
+      this.postScene({ type: 'command', command: paused ? 'pause' : 'resume', args: [] })
+    }
+    this.pauseReasons.clear()
+    if (hiddenPaused) this.pauseReasons.add('hidden')
+    if (blurPaused) this.pauseReasons.add('blur')
+    if (batteryPaused) this.pauseReasons.add('battery')
+  }
+
+  transitionTo(next, options, key) {
+    const transition = options.transition || 'fade'
+    const duration = Math.round((TRANSITION_BASE_MS[transition] || 700) *
+      (TRANSITION_SPEED_FACTOR[options.transitionSpeed] || 1))
+    const reduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+    const ms = reduced || transition === 'cut' ? 0 : clamp(duration, 0, 2000, 700)
+    const old = this.layer
+    this.layer = next
+    this.sceneIframe = next._media.querySelector('iframe') || null
+    this.layers.appendChild(next)
+    if (!old) {
+      next.style.transition = 'none'
+      next.style.opacity = '1'
+      this.applyOptionsToLayer(next)
+      this.syncPlayback()
+      return
+    }
+    this.previousLayer = old
+    const ease = 'cubic-bezier(0.22, 0.61, 0.36, 1)'
+    if (ms === 0) {
+      this.retireLayer(old)
+      next.style.opacity = '1'
+      this.previousLayer = null
+      this.applyOptionsToLayer(next)
+      this.syncPlayback()
+      return
+    }
+    const direction = options.transitionDir || 'left'
+    let incoming = { opacity: '0' }
+    let outgoing = {}
+    if (transition === 'fade') incoming = { opacity: '0' }
+    else if (transition === 'push') {
+      incoming = { transform: pushOffset(direction, true) }
+      outgoing = { transform: pushOffset(direction, false) }
+    } else if (transition === 'wipe') {
+      incoming = { clipPath: wipeInset(direction) }
+      outgoing = {}
+    } else if (transition === 'iris') {
+      incoming = { clipPath: 'circle(0% at 50% 50%)' }
+      outgoing = {}
+    } else if (transition === 'zoom') {
+      incoming = { transform: 'scale(1.06)', opacity: '0' }
+      outgoing = { transform: 'scale(1.04)' }
+    } else if (transition === 'bars') {
+      incoming = { clipPath: barsPolygon(direction, 0) }
+      outgoing = {}
+    }
+    next.style.transition = 'none'
+    next.style.willChange = 'opacity, transform'
+    Object.assign(next.style, incoming)
+    old.style.transition = 'none'
+    old.style.willChange = 'opacity, transform'
+    old.style.opacity = '1'
+    old.style.transform = 'none'
+    requestAnimationFrame(() => {
+      next.style.transition = `opacity ${ms}ms ${ease}, transform ${ms}ms ${ease}, clip-path ${ms}ms ${ease}`
+      old.style.transition = `opacity ${ms}ms ${ease}, transform ${ms}ms ${ease}, clip-path ${ms}ms ${ease}`
+      if (outgoing.opacity !== undefined) old.style.opacity = outgoing.opacity
+      if (outgoing.transform !== undefined) old.style.transform = outgoing.transform
+      if (outgoing.clipPath !== undefined) old.style.clipPath = outgoing.clipPath
+      next.style.opacity = '1'
+      next.style.transform = 'none'
+      next.style.clipPath = transition === 'iris' ? 'circle(75% at 50% 50%)'
+        : transition === 'bars' ? barsPolygon(direction, 1) : 'inset(0)'
+      this.applyOptionsToLayer(next)
+      this.syncPlayback()
+    })
+    setTimeout(() => {
+      if (this.previousLayer === old) this.previousLayer = null
+      next.style.willChange = ''
+      if (this.currentKey === key) {
+        old.style.willChange = ''
+        this.retireLayer(old)
+      }
+    }, ms + 60)
   }
 
   fail(key) {
@@ -1160,64 +1210,86 @@ class BackdropManager {
 
   hide() {
     if (this.root) this.root.style.display = 'none'
-    this.releaseMedia()
-    this.media?.replaceChildren()
-    if (this.media) this.media.style.backgroundImage = 'none'
+    this.releaseLayers()
     this.currentKey = null
-    this.sceneIframe = null
-    this.sceneManifest = null
-    this.webIframe = null
+    this.currentOptions = null
   }
 
-  stopScene() {
-    try { this.sceneIframe?.contentWindow?.__hermesSceneDispose?.() } catch { /* Frame is already unloaded. */ }
-    this.sceneIframe?.remove?.()
+  releaseLayers() {
+    for (const layer of this.layers?.children || []) {
+      this.retireLayer(layer)
+    }
+    this.layer = null
+    this.previousLayer = null
     this.sceneIframe = null
-    this.releaseSceneUrls()
+    this.sceneProject = null
+    this.liveReady = false
+    this.liveFailed = false
+    if (this.liveWatchdog !== null) clearTimeout(this.liveWatchdog)
+    this.liveWatchdog = null
   }
 
-  releaseMedia() {
-    this.sceneLoad?.abort()
-    this.sceneLoad = null
-    this.onCursorLeave?.()
-    const video = this.videoElement || this.media?.querySelector('video')
+  retireLayer(layer) {
+    if (!layer) return
+    const frame = layer._media?.querySelector('iframe')
+    try { frame?.contentWindow?.postMessage({ source: 'hermes-skins-host', type: 'command', command: 'destroy', args: [] }, '*') } catch {}
+    const video = layer._media?.querySelector('video')
     if (video) {
       video.pause()
       video.removeAttribute('src')
       video.load()
     }
-    this.videoElement = null
-    this.stopScene()
+    if (layer._slideTimer) {
+      clearInterval(layer._slideTimer)
+      layer._slideTimer = null
+    }
+    layer.remove()
   }
 
-  releaseSceneUrls() {
-    this.sceneUrls.forEach(url => URL.revokeObjectURL(url))
-    this.sceneUrls = []
+  /** Compatibility alias for callers that release the current media only. */
+  releaseMedia() {
+    this.pointerLeave()
+    this.releaseLayers()
   }
 
   destroy() {
-    if (this.cursorForwardInit) {
-      window.removeEventListener('mousemove', this.onCursorMove, { capture: true })
-      window.removeEventListener('mouseleave', this.onCursorLeave)
-      document.removeEventListener('mouseleave', this.onCursorLeave)
-      window.removeEventListener('blur', this.onCursorLeave)
-      if (this.cursorFrame !== null) window.cancelAnimationFrame(this.cursorFrame)
-      this.cursorFrame = null
-      this.pendingCursor = null
+    this.pointerLeave()
+    if (this.pointerInitialized) {
+      window.removeEventListener('pointermove', this.onPointerMove, { capture: true })
+      window.removeEventListener('pointerdown', this.onPointerDown, { capture: true })
+      window.removeEventListener('pointerup', this.onPointerUp, { capture: true })
+      window.removeEventListener('pointerleave', this.onPointerLeave)
+      document.removeEventListener('pointerleave', this.onPointerLeave)
+      window.removeEventListener('blur', this.handleBlur)
+      window.removeEventListener('focus', this.handleFocus)
+      window.removeEventListener('wheel', this.onWheel, { capture: true })
+      document.removeEventListener('visibilitychange', this.handleVisibility)
+      window.removeEventListener('message', this.handleSceneMessage)
+      if (this.battery) {
+        this.battery.removeEventListener('chargingchange', this.handleBattery)
+        this.battery.removeEventListener('levelchange', this.handleBattery)
+      }
+      this.pointerInitialized = false
       this.cursorForwardInit = false
     }
-    this.hide()
+    this.releaseLayers()
     this.root?.remove()
     this.root = null
-    this.media = null
-    this.mask = null
+    this.layers = null
+    this.scrim = null
     this.currentKey = null
+    this.currentOptions = null
     this.failedKeys.clear()
-    if (this.sceneListeners) {
-      window.removeEventListener('message', this.handleSceneMessage)
-      document.removeEventListener('visibilitychange', this.handleVisibility)
-      this.sceneListeners = false
-    }
+  }
+}
+
+function isLiveWallpaperSupported() {
+  if (typeof WebGL2RenderingContext === 'undefined') return false
+  try {
+    const canvas = document.createElement('canvas')
+    return Boolean(canvas.getContext('webgl2'))
+  } catch {
+    return false
   }
 }
 
@@ -1277,7 +1349,20 @@ class GlassController {
     this.terminalBase = null
   }
 
-  update({ enabled, glassTransparency = 10, bubbleOpacity = 100, composerFrost = 10, surfaceFrost = 8 }) {
+  update({
+    enabled, glassTransparency = 10, bubbleOpacity = 100, composerFrost = 10,
+    surfaceFrost = 8, saturation = 150, border = 35, highlight = true,
+    accent = '#4f8cff', glassColor = null, glassDarkSeparate = false,
+    glassFidelity = 100, chatGlassFidelity = 100,
+    settingsWindowTransparency = 20, settingsWindowBlur = 16,
+    sidebarGlass = true, sidebarFollowGlobal = true, sidebarBlur = 16,
+    sidebarAlpha = 60, sidebarColor = '#ffffff', leftSidebarGlass = true,
+    leftSidebarCornerRadius = 'native', leftSidebarSquareTL = false,
+    leftSidebarSquareTR = false, leftSidebarSquareBR = false, leftSidebarSquareBL = false,
+    rightSidebarCornerRadius = 'native', rightSidebarSquareTL = false,
+    rightSidebarSquareTR = false, rightSidebarSquareBR = false, rightSidebarSquareBL = false,
+    titlebarGlass = true, isDark = true
+  }) {
     if (typeof document === 'undefined') return
     const root = document.documentElement
     if (!enabled) {
@@ -1308,21 +1393,56 @@ class GlassController {
       const n = Number(value)
       return Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : fallback
     }
-    const keep = 100 - pct(glassTransparency, 10)
+    const fidelity = Math.min(1, Math.max(0, Number(glassFidelity) / 100))
+    const chatFidelity = Math.min(1, Math.max(0, Number(chatGlassFidelity) / 100))
+    const keep = (100 - pct(glassTransparency, 10)) * (0.4 + 0.6 * fidelity)
     // Floating text sits over other text, so it retains a readable veil while
     // still revealing the wallpaper. It follows the main lever above 70% fill.
     const floatingKeep = Math.max(keep, 70)
-    const overlayKeep = Math.max(keep, 74)
-    const bubbleKeep = pct(bubbleOpacity, 100)
+    const overlayKeep = Math.min(100, Math.max(25, 100 - pct(settingsWindowTransparency, 20)))
+    const bubbleKeep = pct(bubbleOpacity, 100) * (0.5 + 0.5 * chatFidelity)
     const composerBlur = Math.min(20, Math.max(0, pct(composerFrost, 10)))
     const surfaceBlur = Math.min(20, Math.max(0, pct(surfaceFrost, 8)))
+    const overlayBlur = Math.min(60, Math.max(0, pct(settingsWindowBlur, 16)))
 
     // Frosted glass samples the wallpaper behind a surface; blur(0) would still
     // promote a composited layer, so the frost vars stay `none` when off.
-    const frost = surfaceBlur > 0 ? `blur(${surfaceBlur}px)` : 'none'
-    const overlayFrost = frost
+    const saturate = Math.min(200, Math.max(100, Number.isFinite(Number(saturation)) ? Number(saturation) : 150))
+    const borderAlpha = Math.min(1, Math.max(0, (Number.isFinite(Number(border)) ? Number(border) : 35) / 100))
+    const highlightAlpha = highlight ? 0.16 : 0
+    const frost = surfaceBlur > 0 ? `saturate(${saturate}%) blur(${surfaceBlur}px)` : 'none'
+    const overlayFrost = overlayBlur > 0 ? `saturate(${saturate}%) blur(${overlayBlur}px)` : 'none'
     const overlayScrimFrost = 'none'
-    const composerFrostCss = composerBlur > 0 ? `blur(${composerBlur}px)` : 'none'
+    const composerFrostCss = composerBlur > 0 ? `saturate(${saturate}%) blur(${composerBlur}px)` : 'none'
+    const chosenGlassColor = glassColor && typeof glassColor === 'object'
+      ? (isDark && glassDarkSeparate ? glassColor.dark : glassColor.light)
+      : null
+    const customTint = /^#[0-9a-f]{6}$/i.test(chosenGlassColor || '') &&
+      String(chosenGlassColor).toLowerCase() !== '#ffffff'
+      ? `color-mix(in srgb, ${chosenGlassColor} ${keep}%, transparent)`
+      : null
+    const chromeTint = customTint || `color-mix(in srgb, var(--ui-bg-chrome) ${keep}%, transparent)`
+    const sidebarKeep = sidebarFollowGlobal ? keep : 100 - pct(sidebarAlpha, 60)
+    const sidebarTint = !sidebarGlass || !leftSidebarGlass
+      ? 'var(--ui-bg-sidebar)'
+      : sidebarFollowGlobal
+        ? chromeTint
+        : `color-mix(in srgb, ${sidebarColor} ${sidebarKeep}%, transparent)`
+    const sidebarFrost = sidebarFollowGlobal
+      ? frost
+      : sidebarBlur > 0 ? `saturate(${saturate}%) blur(${Math.min(60, sidebarBlur)}px)` : 'none'
+    const titlebarTint = titlebarGlass ? chromeTint : 'var(--ui-bg-chrome)'
+    const titlebarFrost = titlebarGlass ? frost : 'none'
+    const cornerOf = (mode, square) => square ? '0px'
+      : mode === 'native' ? 'var(--radius-lg, 12px)' : `${mode}px`
+    const nativeCorners = leftSidebarCornerRadius === 'native' &&
+      !leftSidebarSquareTL && !leftSidebarSquareTR &&
+      !leftSidebarSquareBR && !leftSidebarSquareBL
+    const sidebarRadius = nativeCorners ? 'revert'
+      : `${cornerOf(leftSidebarCornerRadius, leftSidebarSquareTL)}
+        ${cornerOf(leftSidebarCornerRadius, leftSidebarSquareTR)}
+        ${cornerOf(leftSidebarCornerRadius, leftSidebarSquareBR)}
+        ${cornerOf(leftSidebarCornerRadius, leftSidebarSquareBL)}`
 
     // Terminal: xterm resolves --ui-terminal-surface-background to a concrete
     // color for its WebGL canvas, and the persistent host paints the same var
@@ -1338,7 +1458,7 @@ class GlassController {
     // keeps the value tracking the official light/dark mode on every sync.
     const terminalAlpha = root.dataset?.hermesTerminalAlpha === 'true'
     const themeKey = `${root.dataset?.hermesTheme}:${root.dataset?.hermesMode}:${root.className}:${root.style?.cssText || ''}`
-    const materialKey = `${keep}:${bubbleKeep}:${composerBlur}:${surfaceBlur}:${terminalAlpha}:${themeKey}`
+    const materialKey = `${keep}:${overlayKeep}:${bubbleKeep}:${composerBlur}:${surfaceBlur}:${overlayBlur}:${saturate}:${borderAlpha}:${highlightAlpha}:${terminalAlpha}:${accent}:${chosenGlassColor}:${fidelity}:${chatFidelity}:${sidebarGlass}:${sidebarFollowGlobal}:${sidebarBlur}:${sidebarAlpha}:${sidebarColor}:${leftSidebarGlass}:${leftSidebarCornerRadius}:${leftSidebarSquareTL}:${leftSidebarSquareTR}:${leftSidebarSquareBR}:${leftSidebarSquareBL}:${rightSidebarCornerRadius}:${rightSidebarSquareTL}:${rightSidebarSquareTR}:${rightSidebarSquareBR}:${rightSidebarSquareBL}:${titlebarGlass}:${themeKey}`
     if (this.lastMaterialKey === materialKey && this.styleEl.isConnected) return
     let terminalSurface = 'var(--ui-bg-chrome)'
     if (terminalAlpha && document.body) {
@@ -1365,10 +1485,23 @@ class GlassController {
         '--hermes-skins-floating-tint': `color-mix(in srgb, var(--ui-bg-chrome) ${floatingKeep}%, transparent)`,
         '--hermes-skins-overlay-tint': `color-mix(in srgb, var(--ui-bg-chrome) ${overlayKeep}%, transparent)`,
         '--hermes-skins-overlay-sidebar-tint': `color-mix(in srgb, var(--ui-bg-sidebar) ${Math.max(25, overlayKeep - 40)}%, transparent)`,
+        '--hermes-skins-chrome-tint': chromeTint,
+        '--hermes-skins-sidebar-tint': sidebarTint,
+        '--hermes-skins-editor-tint': chromeTint,
         '--hermes-skins-frost': frost,
+        '--hermes-skins-sidebar-frost': sidebarFrost,
+        '--hermes-skins-titlebar-tint': titlebarTint,
+        '--hermes-skins-titlebar-frost': titlebarFrost,
         '--hermes-skins-overlay-frost': overlayFrost,
         '--hermes-skins-overlay-scrim-frost': overlayScrimFrost,
         '--hermes-skins-composer-frost': composerFrostCss,
+        '--hermes-skins-glass-border': String(borderAlpha),
+        '--hermes-skins-glass-highlight': String(highlightAlpha),
+        '--hermes-skins-accent': accent,
+        '--we-accent': accent,
+        '--hermes-skins-fidelity': String(fidelity),
+        '--hermes-skins-chat-fidelity': String(chatFidelity),
+        '--hermes-skins-sidebar-radius': sidebarRadius,
         '--user-bubble-keep': `${bubbleKeep}%`,
         '--ui-terminal-surface-background': terminalSurface
       }
@@ -1383,16 +1516,26 @@ class GlassController {
     const css = `
       :root[data-hermes-skins-active="true"] {
         --hermes-skins-keep: ${keep}%;
-        --hermes-skins-chrome-tint: color-mix(in srgb, var(--ui-bg-chrome) var(--hermes-skins-keep), transparent);
-        --hermes-skins-sidebar-tint: var(--hermes-skins-chrome-tint);
-        --hermes-skins-editor-tint: var(--hermes-skins-chrome-tint);
+        --hermes-skins-chrome-tint: ${chromeTint};
+        --hermes-skins-sidebar-tint: ${sidebarTint};
+        --hermes-skins-editor-tint: ${chromeTint};
         --hermes-skins-floating-tint: color-mix(in srgb, var(--ui-bg-chrome) ${floatingKeep}%, transparent);
         --hermes-skins-overlay-tint: color-mix(in srgb, var(--ui-bg-chrome) ${overlayKeep}%, transparent);
         --hermes-skins-overlay-sidebar-tint: color-mix(in srgb, var(--ui-bg-sidebar) ${Math.max(25, overlayKeep - 40)}%, transparent);
         --hermes-skins-frost: ${frost};
+        --hermes-skins-sidebar-frost: ${sidebarFrost};
+        --hermes-skins-titlebar-tint: ${titlebarTint};
+        --hermes-skins-titlebar-frost: ${titlebarFrost};
         --hermes-skins-overlay-frost: ${overlayFrost};
         --hermes-skins-overlay-scrim-frost: ${overlayScrimFrost};
         --hermes-skins-composer-frost: ${composerFrostCss};
+        --hermes-skins-glass-border: ${borderAlpha};
+        --hermes-skins-glass-highlight: ${highlightAlpha};
+        --hermes-skins-accent: ${accent};
+        --we-accent: ${accent};
+        --hermes-skins-fidelity: ${fidelity};
+        --hermes-skins-chat-fidelity: ${chatFidelity};
+        --hermes-skins-sidebar-radius: ${sidebarRadius};
         /* Bubble fill share. !important is required to outrank the host's own
            bubble-transparency lever, which publishes the same custom property
            as an inline style on <html>; while a wallpaper is showing this
@@ -1494,15 +1637,18 @@ class GlassController {
          light/dark only changes the theme seed underneath. */
       :root[data-hermes-skins-active="true"] [data-slot="sidebar"] {
         background-color: var(--hermes-skins-sidebar-tint) !important;
-        backdrop-filter: var(--hermes-skins-frost);
-        -webkit-backdrop-filter: var(--hermes-skins-frost);
+        backdrop-filter: var(--hermes-skins-sidebar-frost);
+        -webkit-backdrop-filter: var(--hermes-skins-sidebar-frost);
+        border-radius: var(--hermes-skins-sidebar-radius, revert);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, var(--hermes-skins-glass-highlight)),
+          inset 0 0 0 1px rgba(255, 255, 255, var(--hermes-skins-glass-border));
       }
       /* Frameless-window title bar: the popout shell declares --titlebar-height
          and its aria-hidden first child paints the opaque chrome strip. */
       :root[data-hermes-skins-active="true"] [data-contrib-shell][style*="--titlebar-height"] > div[aria-hidden="true"] {
-        background-color: var(--hermes-skins-chrome-tint) !important;
-        backdrop-filter: var(--hermes-skins-frost);
-        -webkit-backdrop-filter: var(--hermes-skins-frost);
+        background-color: var(--hermes-skins-titlebar-tint) !important;
+        backdrop-filter: var(--hermes-skins-titlebar-frost);
+        -webkit-backdrop-filter: var(--hermes-skins-titlebar-frost);
       }
       /* Token-painted structural surfaces (status bar, pane headers) restated
          for builds that paint them without the utility class; the frost is the
@@ -1517,6 +1663,7 @@ class GlassController {
         background-color: var(--hermes-skins-chrome-tint) !important;
         backdrop-filter: var(--hermes-skins-frost);
         -webkit-backdrop-filter: var(--hermes-skins-frost);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, var(--hermes-skins-glass-highlight));
       }
       /* Pane tab strip: the pane header behind it is the single structural
          fill. The strip's own utility fill — and the inactive-tab fill it
@@ -1530,7 +1677,7 @@ class GlassController {
         -webkit-backdrop-filter: none;
       }
       /* Plugin SDK cards use bg-card/bg-background, not Hermes' surface
-         tokens. These are the large white plates visible in Skin Center.
+         tokens. These are the large white plates visible in the plugin settings.
          Scope the fix to our marked cards so other apps' readability is not
          changed; nested wallpaper thumbnails do not stack another veil. */
       :root[data-hermes-skins-active="true"] [data-hermes-skins-surface] {
@@ -1602,7 +1749,9 @@ class GlassController {
         background-color: var(--hermes-skins-overlay-tint) !important;
         backdrop-filter: var(--hermes-skins-overlay-frost) !important;
         -webkit-backdrop-filter: var(--hermes-skins-overlay-frost) !important;
-        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.2), 0 0 0 1px color-mix(in srgb, var(--dt-border) 40%, transparent) !important;
+        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.2),
+          0 0 0 1px color-mix(in srgb, var(--dt-border) 40%, transparent),
+          inset 0 1px 0 rgba(255, 255, 255, var(--hermes-skins-glass-highlight)) !important;
       }
       /* Left sidebar in overlay cards: single layer translucency to avoid double-darkening */
       :root[data-hermes-skins-active="true"] [data-glass-raised] aside,
@@ -1945,175 +2094,623 @@ class RangeController {
 }
 
 // ─── Submodule: Storage ───────────────────────────────────────
+const ROTATION_INTERVAL_MIN = 1
+const ROTATION_INTERVAL_MAX = 1440
+const ROTATION_TRIGGER_VALUES = ['interval', 'videoEnd']
+const ROTATION_ORDER_VALUES = ['sequence', 'random']
+const TRANSITION_VALUES = ['cut', 'fade', 'push', 'wipe', 'iris', 'zoom', 'bars']
+const TRANSITION_DIRECTIONS = ['left', 'right', 'up', 'down']
+const TRANSITION_SPEEDS = ['fast', 'normal', 'slow']
+const WALLPAPER_TYPES = ['video', 'web', 'image', 'scene']
+const CONTENT_RATINGS = ['everyone', 'pg13', 'mature', 'unrated']
+const ORIENTATION_FILTERS = ['all', 'landscape', 'portrait']
+const PICKER_LAYOUTS = ['classic', 'fixed']
+const FX_CLICK_STYLES = ['ripple', 'spark', 'both']
+const FX_TRAIL_STYLES = ['comet', 'dust']
+const FX_BLEND_VALUES = ['screen', 'normal', 'overlay', 'multiply', 'lighten']
+const FX_COLOR_MODES = ['accent', 'rainbow', 'custom']
+const FONT_SET_KEYS = [
+  'themeColors', 'themeDarkSeparate', 'themeSize', 'themeWeight',
+  'themeFamily', 'globalFamily', 'componentFonts'
+]
+const THEME_COLOR_ROLE_IDS = ['primary', 'secondary', 'tertiary', 'caption', 'dimmed']
+const TYPE_ROLE_IDS = [
+  'markdown-h1', 'markdown-h2', 'markdown-h3', 'markdown-h4',
+  'markdown-base', 'markdown-small', 'markdown-code', 'markdown-code-block',
+  'markdown-table', 'markdown-table-head', 'xs-13', 'xxs-12'
+]
+const COMPONENT_FONT_TARGETS = [
+  { id: 'markdown', label: '对话正文' },
+  { id: 'codeBlock', label: '代码块' },
+  { id: 'terminal', label: '终端块' },
+  { id: 'table', label: '表格' }
+]
+
 const DEFAULT_CONFIG = {
-  schemaVersion: 4,
-  activeSkinId: 'default',
-  previousTheme: null,
+  schemaVersion: 7,
+
   wallpaperEnabled: false,
   wallpaperType: 'image',
   wallpaperMode: 'live',
   wallpaperFit: 'cover',
   wallpaperSource: '',
   wallpaperBlur: 0,
-  maskOcclusion: 35,
+  maskOcclusion: 25,
   wallpaperOpacity: 100,
+  backgroundBrightness: 100,
+  backgroundContrast: 100,
+  backgroundSaturate: 100,
+  wallpaperFlip: false,
+  wallpaperTransition: 'cut',
+  wallpaperTransitionDir: 'left',
+  wallpaperTransitionSpeed: 'normal',
+
   pauseOnHidden: true,
+  pauseOnBlur: false,
+  pauseOnBattery: false,
   wallpaperSound: false,
   wallpaperVolume: 100,
+  videoPlaybackRate: 1,
+  sceneLive: true,
+  sceneLiveFps: 30,
+  sceneAutoQuality: true,
+  sceneRenderDpr: 0,
+  sceneVideoTexScale: 0,
+  liveBootDelay: 3,
+  pictureSlideSeconds: 0,
+
+  hiddenWallpaperIds: [],
+  userProps: {},
+  contentRatingFilter: ['everyone'],
+  typeFilter: [...WALLPAPER_TYPES],
+  folderFilter: 'all',
+  orientationFilter: 'all',
+  pickerLayout: 'fixed',
+
+  rotationEnabled: false,
+  rotationGroupId: '',
+  rotationGroups: [],
+  rotationSeeded: false,
+  rotationMinutes: 30,
+
+  fontCustom: false,
+  fontSets: [],
+  fontSetId: '',
+  themeColors: {},
+  themeDarkSeparate: false,
+  themeSize: {},
+  themeWeight: {},
+  themeFamily: {},
+  globalFamily: '',
+  componentFonts: {},
+  caretColor: '',
+
+  accent: '#4f8cff',
+  uiColorCustom: false,
+  uiColorSend: '',
+  uiColorLink: '',
+  uiColorFileIcon: '',
+  uiColorTab: '',
+  uiColorDeepDiving: '',
+  themeFollow: false,
+
+  fxEnabled: false,
+  fxClick: true,
+  fxClickStyle: 'ripple',
+  fxClickSize: 140,
+  fxClickGlow: 60,
+  fxTrail: true,
+  fxTrailStyle: 'comet',
+  fxTrailLength: 420,
+  fxTrailWidth: 3,
+  fxTrailGlow: 60,
+  fxOpacity: 85,
+  fxBlend: 'screen',
+  fxColorMode: 'accent',
+  fxColor: '#4f8cff',
+
+  parallaxEnabled: false,
+  parallaxBg: 1,
+  parallaxUi: false,
+  parallaxPlugin: false,
+  parallaxUiChatDepth: 1.2,
+  parallaxUiComposerDepth: 1.8,
+  parallaxUiSidebarDepth: 1.6,
+  parallaxUiBubbleDepth: 1.4,
+  parallaxPluginDepths: {},
+  parallaxSmooth: 85,
+
+  layerPositionX: 50,
+  layerPositionY: 50,
+  layerScale: 100,
+
   panelGlass: 10,
   bubbleOpacity: 55,
   composerFrost: 10,
   surfaceFrost: 8,
+  glassSaturation: 150,
+  glassBorder: 35,
+  glassHighlight: true,
+  glassColor: { light: '#ffffff', dark: '#ffffff' },
+  glassDarkSeparate: false,
+  glassFidelity: 100,
+  chatGlassFidelity: 100,
+  settingsWindowTransparency: 20,
+  settingsWindowBlur: 16,
+  sidebarGlass: true,
+  sidebarFollowGlobal: true,
+  sidebarBlur: 16,
+  sidebarAlpha: 60,
+  sidebarColor: '#ffffff',
+  leftSidebarGlass: true,
+  leftSidebarCornerRadius: 'native',
+  leftSidebarSquareTL: false,
+  leftSidebarSquareTR: false,
+  leftSidebarSquareBR: false,
+  leftSidebarSquareBL: false,
+  rightSidebarCornerRadius: 'native',
+  rightSidebarSquareTL: false,
+  rightSidebarSquareTR: false,
+  rightSidebarSquareBR: false,
+  rightSidebarSquareBL: false,
+  titlebarGlass: true,
+
   weRoots: [],
-  weSelection: null,
-  customSkins: []
+  weSelection: null
 }
 
-/**
- * The single parameter contract. UI sliders, normalization, rendering and the
- * i18n copy all read these ranges — no other file may clamp a stored value.
- *
- * Percent fields are true 0-100 levers with exact endpoint semantics:
- *   maskOcclusion 100 = the veil fully hides the wallpaper (DSH's own UI caps
- *     the same lever at 90; user request for Hermes is 100, so the endpoint is
- *     real, not a re-clamped 0.9 alpha),
- *   wallpaperOpacity 0 = the wallpaper media is invisible,
- *   panelGlass 100 = structural panel fills fully transparent,
- *   bubbleOpacity 0 = bubble fill transparent while text keeps its own opacity,
- *   wallpaperVolume 0 = silent.
- * Pixel fields follow the dsh-skins reference (commit 82f42bd3):
- *   wallpaperBlur = DSH wallpaperBlur (media layer, 0-60px, default 0),
- *   composerFrost = DSH inputCardBlur (composer card, 0-20px, default 10).
- * surfaceFrost is a Hermes extension: frosted blur behind the structural
- * panels (title bar, sidebars, panel headers, status bar, terminal). DSH has
- * no identical field — its closest relatives are the per-state backdrop blurs,
- * which this plugin does not expose as separate levers.
- */
 const PARAM_RANGES = {
   wallpaperBlur: { min: 0, max: 60, unit: 'px' },
   maskOcclusion: { min: 0, max: 100, unit: '%' },
   wallpaperOpacity: { min: 0, max: 100, unit: '%' },
+  backgroundBrightness: { min: 40, max: 160, unit: '%' },
+  backgroundContrast: { min: 40, max: 200, unit: '%' },
+  backgroundSaturate: { min: 0, max: 200, unit: '%' },
+  layerPositionX: { min: 0, max: 100, unit: '%' },
+  layerPositionY: { min: 0, max: 100, unit: '%' },
+  layerScale: { min: 50, max: 150, unit: '%' },
   panelGlass: { min: 0, max: 100, unit: '%' },
   bubbleOpacity: { min: 0, max: 100, unit: '%' },
   composerFrost: { min: 0, max: 20, unit: 'px' },
   surfaceFrost: { min: 0, max: 20, unit: 'px' },
-  wallpaperVolume: { min: 0, max: 100, unit: '%' }
+  wallpaperVolume: { min: 0, max: 100, unit: '%' },
+  glassSaturation: { min: 100, max: 200, unit: '%' },
+  glassBorder: { min: 0, max: 100, unit: '%' },
+  glassFidelity: { min: 0, max: 100, unit: '%' },
+  chatGlassFidelity: { min: 0, max: 100, unit: '%' },
+  settingsWindowTransparency: { min: 0, max: 100, unit: '%' },
+  settingsWindowBlur: { min: 0, max: 60, unit: 'px' },
+  sidebarBlur: { min: 0, max: 60, unit: 'px' },
+  sidebarAlpha: { min: 0, max: 100, unit: '%' },
+  fxClickSize: { min: 40, max: 400, unit: 'px' },
+  fxClickGlow: { min: 0, max: 100, unit: '%' },
+  fxTrailLength: { min: 80, max: 2000, unit: 'ms' },
+  fxTrailWidth: { min: 1, max: 12, unit: 'px' },
+  fxTrailGlow: { min: 0, max: 100, unit: '%' },
+  fxOpacity: { min: 10, max: 100, unit: '%' },
+  parallaxBg: { min: 0, max: 10, unit: '%' },
+  parallaxUiChatDepth: { min: 0, max: 10, unit: '%' },
+  parallaxUiComposerDepth: { min: 0, max: 10, unit: '%' },
+  parallaxUiSidebarDepth: { min: 0, max: 10, unit: '%' },
+  parallaxUiBubbleDepth: { min: 0, max: 10, unit: '%' },
+  parallaxSmooth: { min: 0, max: 98, unit: '%' }
 }
 
-/** Clamp one contract field. A missing/NaN field falls back to its default;
- *  a legal 0 (or any endpoint) is stored as 0, never mistaken for "unset". */
+const HEX_RE = /^#[0-9a-f]{6}$/i
+const GROUP_ID_RE = /^[A-Za-z0-9_-]{1,64}$/
+const FONT_SET_ID_RE = /^[A-Za-z0-9_-]{1,64}$/
+
+function clampNum(value, min, max, fallback) {
+  const number = Number(value)
+  return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback
+}
+
 function paramInRange(key, value) {
   const range = PARAM_RANGES[key]
   if (!range) throw new Error(`Unknown parameter: ${key}`)
-  if (!Number.isFinite(value)) return DEFAULT_CONFIG[key]
-  return Math.min(range.max, Math.max(range.min, value))
+  return clampNum(value, range.min, range.max, DEFAULT_CONFIG[key])
 }
 
-const validPalette = colors => colors && typeof colors === 'object' &&
-  ['background', 'foreground', 'primary'].every(key => /^#[0-9a-f]{6}$/i.test(colors[key] || '')) &&
-  Object.values(colors).every(value => typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value))
+const hex = (value, fallback = '') => typeof value === 'string' && HEX_RE.test(value) ? value : fallback
+const text = (value, max = 200) => typeof value === 'string' ? value.slice(0, max) : ''
 
-const validCustomSkin = skin => skin && typeof skin.id === 'string' && /^custom-[\w-]+$/.test(skin.id) &&
-  typeof skin.name === 'string' && skin.name.length > 0 && skin.name.length <= 80 &&
-  validPalette(skin.colors) && (!skin.darkColors || validPalette(skin.darkColors))
+function uniqueStrings(value, maxItems = 5000, maxLength = 1024) {
+  return Array.isArray(value)
+    ? [...new Set(value.filter(item => typeof item === 'string' && item.length > 0 && item.length <= maxLength))]
+      .slice(0, maxItems)
+    : []
+}
+
+function enumArray(value, allowed, fallback) {
+  if (!Array.isArray(value)) return [...fallback]
+  const filtered = [...new Set(value.filter(item => allowed.includes(item)))]
+  return filtered.length ? filtered : [...fallback]
+}
+
+function normalizeRotationGroup(raw) {
+  if (!raw || typeof raw !== 'object') return null
+  const id = typeof raw.id === 'string' && GROUP_ID_RE.test(raw.id) ? raw.id : ''
+  if (!id) return null
+  return {
+    id,
+    name: typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim().slice(0, 80) : '轮播列表',
+    interval: Math.round(clampNum(raw.interval, ROTATION_INTERVAL_MIN, ROTATION_INTERVAL_MAX, DEFAULT_CONFIG.rotationMinutes)),
+    order: ROTATION_ORDER_VALUES.includes(raw.order) ? raw.order : 'sequence',
+    trigger: ROTATION_TRIGGER_VALUES.includes(raw.trigger) ? raw.trigger : 'interval',
+    wallpaperIds: uniqueStrings(raw.wallpaperIds, 5000, 1024)
+  }
+}
+
+function normalizeRotationGroups(value) {
+  if (!Array.isArray(value)) return []
+  return value.map(normalizeRotationGroup).filter(Boolean).slice(0, 100)
+}
+
+function sanitizeThemeColors(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  const out = {}
+  for (const role of THEME_COLOR_ROLE_IDS) {
+    const pair = value[role]
+    if (!pair || typeof pair !== 'object' || Array.isArray(pair)) continue
+    const light = hex(pair.light)
+    const dark = hex(pair.dark || pair.light)
+    if (light && dark) out[role] = { light, dark }
+  }
+  return out
+}
+
+function sanitizeTypographyMap(value, allowed, min, max) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  const out = {}
+  for (const key of allowed) {
+    if (value[key] === undefined || value[key] === '') continue
+    out[key] = Math.round(clampNum(value[key], min, max, min))
+  }
+  return out
+}
+
+function sanitizeFamilyMap(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  const out = {}
+  for (const key of TYPE_ROLE_IDS) {
+    const family = text(value[key], 200).trim()
+    if (family) out[key] = family
+  }
+  return out
+}
+
+function sanitizeComponentFonts(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  const out = {}
+  const ids = new Set(COMPONENT_FONT_TARGETS.map(target => target.id))
+  for (const [id, raw] of Object.entries(value)) {
+    if (!ids.has(id) || !raw || typeof raw !== 'object' || Array.isArray(raw)) continue
+    const entry = {}
+    if (raw.size !== undefined && raw.size !== '') entry.size = Math.round(clampNum(raw.size, 8, 48, 14))
+    if (raw.weight !== undefined && raw.weight !== '') entry.weight = Math.round(clampNum(raw.weight, 100, 900, 400))
+    const family = text(raw.family, 200).trim()
+    if (family) entry.family = family
+    if (Object.keys(entry).length) out[id] = entry
+  }
+  return out
+}
+
+function sanitizeFontValues(raw) {
+  const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
+  return {
+    themeColors: sanitizeThemeColors(src.themeColors),
+    themeDarkSeparate: src.themeDarkSeparate === true,
+    themeSize: sanitizeTypographyMap(src.themeSize, TYPE_ROLE_IDS, 8, 48),
+    themeWeight: sanitizeTypographyMap(src.themeWeight, TYPE_ROLE_IDS, 100, 900),
+    themeFamily: sanitizeFamilyMap(src.themeFamily),
+    globalFamily: text(src.globalFamily, 200).trim(),
+    componentFonts: sanitizeComponentFonts(src.componentFonts)
+  }
+}
+
+function sanitizeFontSets(value) {
+  if (!Array.isArray(value)) return []
+  const out = []
+  for (const raw of value) {
+    if (!raw || typeof raw !== 'object') continue
+    const id = typeof raw.id === 'string' && FONT_SET_ID_RE.test(raw.id) ? raw.id : ''
+    if (!id || out.some(item => item.id === id)) continue
+    out.push({
+      id,
+      name: typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim().slice(0, 80) : '字体集',
+      values: sanitizeFontValues(raw.values)
+    })
+    if (out.length >= 100) break
+  }
+  return out
+}
+
+function sanitizePluginDepths(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  const out = {}
+  for (const [slot, depth] of Object.entries(value)) {
+    if (typeof slot !== 'string' || !slot || slot.length > 120) continue
+    out[slot] = clampNum(depth, 0, 10, 1)
+  }
+  return out
+}
+
+function scalarValue(value) {
+  return value === null || ['string', 'number', 'boolean'].includes(typeof value)
+    ? (typeof value === 'string' ? value.slice(0, 2048) : value)
+    : null
+}
+
+function sanitizeUserProps(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  const out = {}
+  for (const [id, props] of Object.entries(value)) {
+    if (typeof id !== 'string' || !id || id.length > 1024 ||
+        !props || typeof props !== 'object' || Array.isArray(props)) continue
+    const clean = {}
+    for (const [name, propValue] of Object.entries(props)) {
+      if (typeof name !== 'string' || !name || name.length > 120) continue
+      const scalar = scalarValue(propValue)
+      if (scalar !== null) clean[name] = scalar
+    }
+    if (Object.keys(clean).length) out[id] = clean
+  }
+  return out
+}
+
+function sanitizeSelectionProperties(value) {
+  if (!Array.isArray(value)) return []
+  return value.filter(property => property && typeof property === 'object' &&
+      typeof property.name === 'string' && typeof property.type === 'string')
+    .slice(0, 100)
+    .map(property => {
+      const entry = {
+        name: property.name.slice(0, 120),
+        type: property.type.slice(0, 20),
+        text: text(property.text, 240),
+        order: Number(property.order) || 0,
+        value: scalarValue(property.value),
+        hidden: property.hidden === true
+      }
+      if (Array.isArray(property.options)) {
+        entry.options = property.options.filter(option => option && typeof option === 'object')
+          .slice(0, 200)
+          .map(option => ({
+            label: text(option.label, 160),
+            value: scalarValue(option.value)
+          }))
+      }
+      for (const key of ['min', 'max', 'step', 'precision']) {
+        if (Number.isFinite(Number(property[key]))) entry[key] = Number(property[key])
+      }
+      if (typeof property.fileType === 'string') entry.fileType = property.fileType.slice(0, 20)
+      return entry
+    })
+}
 
 function normalizeConfig(value) {
   const raw = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
-  // Schema 3 shipped bubbleOpacity default 100 — "keep the stock bubble fill",
-  // which over a wallpaper reads as the solid white/black plates users report
-  // as a bug. v4 moves the untouched default to a glassy 55; a 100 stored on
-  // schema 4+ is a deliberate user choice and stays.
-  const legacyBubbleDefault = (raw.schemaVersion ?? 3) < 4 && raw.bubbleOpacity === 100
+  const schemaVersion = Math.max(7, Number(raw.schemaVersion) || 0)
+  const rotationGroups = normalizeRotationGroups(raw.rotationGroups)
+  const rotationGroupId = rotationGroups.some(group => group.id === raw.rotationGroupId)
+    ? raw.rotationGroupId : ''
+  const transition = raw.wallpaperTransition === 'slide' ? 'push'
+    : TRANSITION_VALUES.includes(raw.wallpaperTransition) ? raw.wallpaperTransition : DEFAULT_CONFIG.wallpaperTransition
+  const fontSets = sanitizeFontSets(raw.fontSets)
+  const fontSetId = fontSets.some(item => item.id === raw.fontSetId) ? raw.fontSetId : ''
+  const sourceType = WALLPAPER_TYPES.includes(raw.wallpaperType) ? raw.wallpaperType : DEFAULT_CONFIG.wallpaperType
+  const fit = ['cover', 'contain', 'center', 'fill'].includes(raw.wallpaperFit)
+    ? raw.wallpaperFit : DEFAULT_CONFIG.wallpaperFit
+  const typeFilter = typeof raw.typeFilter === 'string'
+    ? (raw.typeFilter === 'all' ? [...WALLPAPER_TYPES] : [raw.typeFilter].filter(item => WALLPAPER_TYPES.includes(item)))
+    : enumArray(raw.typeFilter, WALLPAPER_TYPES, WALLPAPER_TYPES)
+  const legacyBubbleDefault = (Number(raw.schemaVersion ?? 3) < 4) && raw.bubbleOpacity === 100
+
   return {
-    schemaVersion: 4,
-    activeSkinId: typeof raw.activeSkinId === 'string' ? raw.activeSkinId : DEFAULT_CONFIG.activeSkinId,
-    previousTheme: typeof raw.previousTheme === 'string' ? raw.previousTheme : null,
-    wallpaperEnabled: typeof raw.wallpaperEnabled === 'boolean' ? raw.wallpaperEnabled : DEFAULT_CONFIG.wallpaperEnabled,
-    wallpaperType: ['video', 'scene', 'web'].includes(raw.wallpaperType) ? raw.wallpaperType : 'image',
+    schemaVersion,
+
+    wallpaperEnabled: raw.wallpaperEnabled === true,
+    wallpaperType: sourceType,
     wallpaperMode: raw.wallpaperMode === 'frame' ? 'frame' : 'live',
-    wallpaperFit: ['cover', 'contain', 'fill'].includes(raw.wallpaperFit) ? raw.wallpaperFit : 'cover',
-    wallpaperSource: typeof raw.wallpaperSource === 'string' ? raw.wallpaperSource.slice(0, 16384) : '',
+    wallpaperFit: fit,
+    wallpaperSource: text(raw.wallpaperSource, 16384),
     wallpaperBlur: paramInRange('wallpaperBlur', raw.wallpaperBlur),
     maskOcclusion: paramInRange('maskOcclusion', raw.maskOcclusion),
     wallpaperOpacity: paramInRange('wallpaperOpacity', raw.wallpaperOpacity),
+    backgroundBrightness: paramInRange('backgroundBrightness', raw.backgroundBrightness),
+    backgroundContrast: paramInRange('backgroundContrast', raw.backgroundContrast),
+    backgroundSaturate: paramInRange('backgroundSaturate', raw.backgroundSaturate),
+    wallpaperFlip: raw.wallpaperFlip === true,
+    wallpaperTransition: transition,
+    wallpaperTransitionDir: TRANSITION_DIRECTIONS.includes(raw.wallpaperTransitionDir)
+      ? raw.wallpaperTransitionDir : DEFAULT_CONFIG.wallpaperTransitionDir,
+    wallpaperTransitionSpeed: TRANSITION_SPEEDS.includes(raw.wallpaperTransitionSpeed)
+      ? raw.wallpaperTransitionSpeed : DEFAULT_CONFIG.wallpaperTransitionSpeed,
+
     pauseOnHidden: typeof raw.pauseOnHidden === 'boolean' ? raw.pauseOnHidden : DEFAULT_CONFIG.pauseOnHidden,
+    pauseOnBlur: typeof raw.pauseOnBlur === 'boolean' ? raw.pauseOnBlur : DEFAULT_CONFIG.pauseOnBlur,
+    pauseOnBattery: typeof raw.pauseOnBattery === 'boolean' ? raw.pauseOnBattery : DEFAULT_CONFIG.pauseOnBattery,
     wallpaperSound: typeof raw.wallpaperSound === 'boolean' ? raw.wallpaperSound : DEFAULT_CONFIG.wallpaperSound,
     wallpaperVolume: paramInRange('wallpaperVolume', raw.wallpaperVolume),
-    // Upgrades keep stored numbers: widening panelGlass to 0-100 makes every
-    // previously legal value (including the schema-1 default 80) legal as-is,
-    // so no legacy mapping may rewrite 80 into 15.
+    videoPlaybackRate: clampNum(raw.videoPlaybackRate, 0.5, 2, DEFAULT_CONFIG.videoPlaybackRate),
+    sceneLive: typeof raw.sceneLive === 'boolean' ? raw.sceneLive : DEFAULT_CONFIG.sceneLive,
+    sceneLiveFps: [15, 30, 60].includes(Number(raw.sceneLiveFps)) ? Number(raw.sceneLiveFps) : DEFAULT_CONFIG.sceneLiveFps,
+    sceneAutoQuality: typeof raw.sceneAutoQuality === 'boolean' ? raw.sceneAutoQuality : DEFAULT_CONFIG.sceneAutoQuality,
+    sceneRenderDpr: [0, 1, 1.5, 2].includes(Number(raw.sceneRenderDpr)) ? Number(raw.sceneRenderDpr) : DEFAULT_CONFIG.sceneRenderDpr,
+    sceneVideoTexScale: [0, 0.5, 1].includes(Number(raw.sceneVideoTexScale))
+      ? Number(raw.sceneVideoTexScale) : DEFAULT_CONFIG.sceneVideoTexScale,
+    liveBootDelay: clampNum(raw.liveBootDelay, 0, 30, DEFAULT_CONFIG.liveBootDelay),
+    pictureSlideSeconds: Math.round(clampNum(raw.pictureSlideSeconds, 0, 3600, DEFAULT_CONFIG.pictureSlideSeconds)),
+
+    hiddenWallpaperIds: uniqueStrings(raw.hiddenWallpaperIds),
+    userProps: sanitizeUserProps(raw.userProps),
+    contentRatingFilter: enumArray(raw.contentRatingFilter, CONTENT_RATINGS, ['everyone']),
+    typeFilter,
+    folderFilter: text(raw.folderFilter, 200) || 'all',
+    orientationFilter: ORIENTATION_FILTERS.includes(raw.orientationFilter)
+      ? raw.orientationFilter : DEFAULT_CONFIG.orientationFilter,
+    pickerLayout: PICKER_LAYOUTS.includes(raw.pickerLayout) ? raw.pickerLayout : DEFAULT_CONFIG.pickerLayout,
+
+    rotationEnabled: raw.rotationEnabled === true,
+    rotationGroupId,
+    rotationGroups,
+    rotationSeeded: raw.rotationSeeded === true,
+    rotationMinutes: Math.round(clampNum(raw.rotationMinutes, ROTATION_INTERVAL_MIN, ROTATION_INTERVAL_MAX,
+      DEFAULT_CONFIG.rotationMinutes)),
+
+    fontCustom: raw.fontCustom === true,
+    fontSets,
+    fontSetId,
+    themeColors: sanitizeThemeColors(raw.themeColors),
+    themeDarkSeparate: raw.themeDarkSeparate === true,
+    themeSize: sanitizeTypographyMap(raw.themeSize, TYPE_ROLE_IDS, 8, 48),
+    themeWeight: sanitizeTypographyMap(raw.themeWeight, TYPE_ROLE_IDS, 100, 900),
+    themeFamily: sanitizeFamilyMap(raw.themeFamily),
+    globalFamily: text(raw.globalFamily || raw.fontFamily, 200).trim(),
+    componentFonts: sanitizeComponentFonts(raw.componentFonts),
+    caretColor: hex(raw.caretColor),
+
+    accent: hex(raw.accent, DEFAULT_CONFIG.accent),
+    uiColorCustom: raw.uiColorCustom === true,
+    uiColorSend: hex(raw.uiColorSend),
+    uiColorLink: hex(raw.uiColorLink),
+    uiColorFileIcon: hex(raw.uiColorFileIcon),
+    uiColorTab: hex(raw.uiColorTab),
+    uiColorDeepDiving: hex(raw.uiColorDeepDiving),
+    themeFollow: raw.themeFollow === true,
+
+    fxEnabled: raw.fxEnabled === true,
+    fxClick: raw.fxClick !== false,
+    fxClickStyle: FX_CLICK_STYLES.includes(raw.fxClickStyle) ? raw.fxClickStyle : DEFAULT_CONFIG.fxClickStyle,
+    fxClickSize: paramInRange('fxClickSize', raw.fxClickSize),
+    fxClickGlow: paramInRange('fxClickGlow', raw.fxClickGlow),
+    fxTrail: raw.fxTrail !== false,
+    fxTrailStyle: raw.fxTrailStyle === 'sparkle' ? 'dust'
+      : FX_TRAIL_STYLES.includes(raw.fxTrailStyle) ? raw.fxTrailStyle : DEFAULT_CONFIG.fxTrailStyle,
+    fxTrailLength: paramInRange('fxTrailLength', raw.fxTrailLength),
+    fxTrailWidth: paramInRange('fxTrailWidth', raw.fxTrailWidth),
+    fxTrailGlow: paramInRange('fxTrailGlow', raw.fxTrailGlow),
+    fxOpacity: paramInRange('fxOpacity', raw.fxOpacity),
+    fxBlend: FX_BLEND_VALUES.includes(raw.fxBlend) ? raw.fxBlend : DEFAULT_CONFIG.fxBlend,
+    fxColorMode: FX_COLOR_MODES.includes(raw.fxColorMode) ? raw.fxColorMode : DEFAULT_CONFIG.fxColorMode,
+    fxColor: hex(raw.fxColor, DEFAULT_CONFIG.fxColor),
+
+    parallaxEnabled: raw.parallaxEnabled === true,
+    parallaxBg: paramInRange('parallaxBg', raw.parallaxBg),
+    parallaxUi: raw.parallaxUi === true,
+    parallaxPlugin: raw.parallaxPlugin === true,
+    parallaxUiChatDepth: paramInRange('parallaxUiChatDepth', raw.parallaxUiChatDepth),
+    parallaxUiComposerDepth: paramInRange('parallaxUiComposerDepth', raw.parallaxUiComposerDepth),
+    parallaxUiSidebarDepth: paramInRange('parallaxUiSidebarDepth', raw.parallaxUiSidebarDepth),
+    parallaxUiBubbleDepth: paramInRange('parallaxUiBubbleDepth', raw.parallaxUiBubbleDepth),
+    parallaxPluginDepths: sanitizePluginDepths(raw.parallaxPluginDepths),
+    parallaxSmooth: paramInRange('parallaxSmooth', raw.parallaxSmooth),
+
+    layerPositionX: paramInRange('layerPositionX', raw.layerPositionX),
+    layerPositionY: paramInRange('layerPositionY', raw.layerPositionY),
+    layerScale: paramInRange('layerScale', raw.layerScale),
+
     panelGlass: paramInRange('panelGlass', raw.panelGlass),
     bubbleOpacity: legacyBubbleDefault ? 55 : paramInRange('bubbleOpacity', raw.bubbleOpacity),
     composerFrost: paramInRange('composerFrost', raw.composerFrost),
     surfaceFrost: paramInRange('surfaceFrost', raw.surfaceFrost),
+    glassSaturation: paramInRange('glassSaturation', raw.glassSaturation),
+    glassBorder: paramInRange('glassBorder', raw.glassBorder),
+    glassHighlight: raw.glassHighlight !== false,
+    glassColor: {
+      light: hex(raw.glassColor?.light, DEFAULT_CONFIG.glassColor.light),
+      dark: hex(raw.glassColor?.dark, DEFAULT_CONFIG.glassColor.dark)
+    },
+    glassDarkSeparate: raw.glassDarkSeparate === true,
+    glassFidelity: paramInRange('glassFidelity', raw.glassFidelity),
+    chatGlassFidelity: paramInRange('chatGlassFidelity', raw.chatGlassFidelity),
+    settingsWindowTransparency: paramInRange('settingsWindowTransparency', raw.settingsWindowTransparency),
+    settingsWindowBlur: paramInRange('settingsWindowBlur', raw.settingsWindowBlur),
+    sidebarGlass: raw.sidebarGlass !== false,
+    sidebarFollowGlobal: raw.sidebarFollowGlobal !== false,
+    sidebarBlur: paramInRange('sidebarBlur', raw.sidebarBlur),
+    sidebarAlpha: paramInRange('sidebarAlpha', raw.sidebarAlpha),
+    sidebarColor: hex(raw.sidebarColor, DEFAULT_CONFIG.sidebarColor),
+    leftSidebarGlass: typeof raw.leftSidebarGlass === 'boolean'
+      ? raw.leftSidebarGlass : DEFAULT_CONFIG.leftSidebarGlass,
+    leftSidebarCornerRadius: ['native', '6', '12', '20'].includes(raw.leftSidebarCornerRadius)
+      ? raw.leftSidebarCornerRadius : DEFAULT_CONFIG.leftSidebarCornerRadius,
+    leftSidebarSquareTL: raw.leftSidebarSquareTL === true,
+    leftSidebarSquareTR: raw.leftSidebarSquareTR === true,
+    leftSidebarSquareBR: raw.leftSidebarSquareBR === true,
+    leftSidebarSquareBL: raw.leftSidebarSquareBL === true,
+    rightSidebarCornerRadius: ['native', '6', '12', '20'].includes(raw.rightSidebarCornerRadius)
+      ? raw.rightSidebarCornerRadius : DEFAULT_CONFIG.rightSidebarCornerRadius,
+    rightSidebarSquareTL: raw.rightSidebarSquareTL === true,
+    rightSidebarSquareTR: raw.rightSidebarSquareTR === true,
+    rightSidebarSquareBR: raw.rightSidebarSquareBR === true,
+    rightSidebarSquareBL: raw.rightSidebarSquareBL === true,
+    titlebarGlass: typeof raw.titlebarGlass === 'boolean' ? raw.titlebarGlass : DEFAULT_CONFIG.titlebarGlass,
+
     weRoots: Array.isArray(raw.weRoots)
-      ? [...new Set(raw.weRoots.filter(root => typeof root === 'string' && /^[A-Za-z]:[\\/]/.test(root) && root.length <= 1024))].slice(0, 8)
+      ? [...new Set(raw.weRoots.filter(root => typeof root === 'string' && /^[A-Za-z]:[\\/]/.test(root) && root.length <= 1024))]
+        .slice(0, 8)
       : [],
     weSelection: raw.weSelection && typeof raw.weSelection === 'object' &&
       typeof raw.weSelection.id === 'string' && typeof raw.weSelection.title === 'string'
-      ? { id: raw.weSelection.id.slice(0, 1024), title: raw.weSelection.title.slice(0, 120),
-          kind: String(raw.weSelection.kind || '').slice(0, 20), staticFallback: Boolean(raw.weSelection.staticFallback),
+      ? {
+          id: raw.weSelection.id.slice(0, 1024),
+          title: raw.weSelection.title.slice(0, 120),
+          kind: String(raw.weSelection.kind || '').slice(0, 20),
+          source: String(raw.weSelection.source || '').slice(0, 20),
+          staticFallback: Boolean(raw.weSelection.staticFallback),
+          dir: typeof raw.weSelection.dir === 'string' ? raw.weSelection.dir.slice(0, 1024) : null,
+          manifestPath: typeof raw.weSelection.manifestPath === 'string' ? raw.weSelection.manifestPath.slice(0, 1024) : null,
           framePath: typeof raw.weSelection.framePath === 'string' ? raw.weSelection.framePath.slice(0, 1024) : null,
-          previewPath: typeof raw.weSelection.previewPath === 'string' ? raw.weSelection.previewPath.slice(0, 1024) : null }
-      : null,
-    customSkins: Array.isArray(raw.customSkins)
-      ? raw.customSkins.filter(validCustomSkin).slice(0, 50)
-      : []
+          previewPath: typeof raw.weSelection.previewPath === 'string' ? raw.weSelection.previewPath.slice(0, 1024) : null,
+          slides: uniqueStrings(raw.weSelection.slides, 500, 1024),
+          properties: sanitizeSelectionProperties(raw.weSelection.properties),
+          slideIntervalMs: Number.isFinite(Number(raw.weSelection.slideIntervalMs))
+            ? Math.min(24 * 60 * 60 * 1000, Math.max(1000, Number(raw.weSelection.slideIntervalMs))) : null
+        }
+      : null
   }
 }
 
-const rgb = hex => [1, 3, 5].map(index => parseInt(hex.slice(index, index + 2), 16) / 255)
-const channel = value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
-const luminance = hex => rgb(hex).map(channel).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0)
-
-function contrastRatio(first, second) {
-  const values = [luminance(first), luminance(second)].sort((a, b) => b - a)
-  return (values[0] + 0.05) / (values[1] + 0.05)
-}
-
-function readable(foreground, background) {
-  if (contrastRatio(foreground, background) >= 4.5) return foreground
-  const light = '#ffffff'
-  const dark = '#000000'
-  return contrastRatio(light, background) >= contrastRatio(dark, background) ? light : dark
-}
-
-/** Correct only text colors that fail normal-size WCAG AA contrast. */
-function ensurePaletteContrast(colors) {
-  const result = { ...colors }
-  const pairs = [
-    ['foreground', 'background'], ['cardForeground', 'card'],
-    ['mutedForeground', 'muted'], ['popoverForeground', 'popover'],
-    ['primaryForeground', 'primary'], ['secondaryForeground', 'secondary'],
-    ['accentForeground', 'accent'], ['destructiveForeground', 'destructive']
-  ]
-  for (const [foreground, background] of pairs) {
-    if (result[foreground] && result[background]) {
-      result[foreground] = readable(result[foreground], result[background])
+const cacheableItem = item => item && typeof item === 'object' &&
+  typeof item.id === 'string' && typeof item.title === 'string' &&
+  typeof item.dir === 'string' && typeof item.mediaPath === 'string'
+  ? {
+      id: item.id.slice(0, 1024), title: item.title.slice(0, 120),
+      kind: String(item.kind || '').slice(0, 20), source: String(item.source || '').slice(0, 20),
+      contentrating: typeof item.contentrating === 'string' ? item.contentrating.slice(0, 20) : null,
+      dir: item.dir.slice(0, 1024), mediaPath: item.mediaPath.slice(0, 1024),
+      mediaType: String(item.mediaType || '').slice(0, 20),
+      previewPath: typeof item.previewPath === 'string' ? item.previewPath.slice(0, 1024) : null,
+      slides: Array.isArray(item.slides)
+        ? item.slides.filter(path => typeof path === 'string' && path.length <= 1024).slice(0, 200) : [],
+      slideIntervalMs: Number.isFinite(Number(item.slideIntervalMs)) ? Number(item.slideIntervalMs) : null,
+      staticFallback: Boolean(item.staticFallback),
+      workshopId: typeof item.workshopId === 'string' ? item.workshopId.slice(0, 40) : null,
+      properties: Array.isArray(item.properties) ? item.properties.slice(0, 100).map(property => ({
+        name: String(property?.name || '').slice(0, 120),
+        type: String(property?.type || 'other').slice(0, 20),
+        text: String(property?.text || '').slice(0, 240),
+        order: Number(property?.order) || 0,
+        value: property?.value ?? null,
+        hidden: property?.hidden === true,
+        options: Array.isArray(property?.options) ? property.options.slice(0, 200).map(option => ({
+          label: String(option?.label || '').slice(0, 160),
+          value: option?.value ?? null
+        })) : undefined,
+        min: Number.isFinite(Number(property?.min)) ? Number(property.min) : undefined,
+        max: Number.isFinite(Number(property?.max)) ? Number(property.max) : undefined,
+        step: Number.isFinite(Number(property?.step)) ? Number(property.step) : undefined,
+        precision: Number.isFinite(Number(property?.precision)) ? Number(property.precision) : undefined,
+        fileType: typeof property?.fileType === 'string' ? property.fileType.slice(0, 20) : undefined
+      })) : []
     }
-  }
-  return result
-}
+  : null
 
-function toThemeContribution(skin) {
-  const complete = colors => ensurePaletteContrast({
-    ...colors,
-    destructive: colors.destructive || '#dc2626',
-    destructiveForeground: colors.destructiveForeground || '#ffffff'
-  })
-  return {
-    name: skin.id,
-    label: skin.name || skin.nameEn || skin.id,
-    description: skin.tagline || skin.description || '',
-    colors: complete(skin.colors),
-    darkColors: complete(skin.darkColors || skin.colors)
-  }
-}
-
-function createSkinStore(ctx) {
+function createAppearanceStore(ctx) {
   const $config = atom(normalizeConfig(ctx.storage.get('config', {})))
-  const $tryOnSkin = atom(null)
-  const $tryOnBaseTheme = atom(null)
+  const $weItems = atom((Array.isArray(ctx.storage.get('weCache', [])) ? ctx.storage.get('weCache', []) : [])
+    .map(cacheableItem).filter(Boolean).slice(0, 1000))
   let saveTimer = null
   let pendingSave = null
 
@@ -2142,19 +2739,10 @@ function createSkinStore(ctx) {
     return next
   }
 
-  function startTryOn(skin, themeName) {
-    if (!$tryOnSkin.get()) $tryOnBaseTheme.set(themeName)
-    $tryOnSkin.set(skin)
-  }
-
-  function exitTryOn() {
-    $tryOnSkin.set(null)
-    $tryOnBaseTheme.set(null)
-  }
-
-  function addCustomSkin(skin) {
-    ctx.register({ id: `theme-${skin.id}`, area: 'themes', data: toThemeContribution(skin) })
-    saveConfig(prev => ({ ...prev, customSkins: [skin, ...prev.customSkins] }))
+  function setWeItems(items) {
+    const next = (Array.isArray(items) ? items : []).map(cacheableItem).filter(Boolean).slice(0, 1000)
+    $weItems.set(next)
+    ctx.storage.set('weCache', next)
   }
 
   if (typeof window !== 'undefined') window.addEventListener('pagehide', flushPersistence)
@@ -2162,113 +2750,121 @@ function createSkinStore(ctx) {
     flushPersistence()
     if (typeof window !== 'undefined') window.removeEventListener('pagehide', flushPersistence)
   }
-  return { $config, $tryOnSkin, $tryOnBaseTheme, saveConfig, startTryOn, exitTryOn, addCustomSkin,
-    flushPersistence, destroy }
+  return { $config, $weItems, setWeItems, saveConfig, flushPersistence, destroy }
 }
 
-// ─── Submodule: Skin Controller ───────────────────────────────
-/** Keeps Hermes' selected theme authoritative and owns every cosmetic effect. */
-class SkinController {
-  constructor(store, skins, backdrop, glass) {
+// ─── Submodule: Appearance Controller ─────────────────────────
+/** Owns wallpaper and glass effects; Hermes itself owns the app theme. */
+class AppearanceController {
+  constructor(store, backdrop, glass, extras = []) {
     this.store = store
-    this.skins = skins
     this.backdrop = backdrop
     this.glass = glass
-    this.lastTheme = null
-    this.lastMode = 'dark'
-    this.previewCleanup = null
+    this.extras = extras
     this.pendingConfig = null
     this.configFrame = null
     this.backdrop.onVisibilityChange = () => this.sync()
   }
 
-  findSkin(id) {
-    return [...this.skins, ...this.store.$config.get().customSkins].find(s => s.id === id)
-  }
-
-  sync(themeName = this.lastTheme, renderedMode = this.lastMode) {
-    this.lastTheme = themeName
-    this.lastMode = renderedMode
-    const preview = this.store.$tryOnSkin.get()
-    if (preview && this.store.$tryOnBaseTheme.get() !== themeName) {
-      this.previewCleanup?.()
-      this.previewCleanup = null
-      this.store.exitTryOn()
-    }
-    const activePreview = this.store.$tryOnSkin.get()
-    const skin = activePreview || this.findSkin(themeName)
+  sync() {
     const config = this.store.$config.get()
-    const customSource = !activePreview && config.wallpaperSource && !config.wallpaperSource.startsWith('data:image/svg+xml')
-    const source = customSource ? config.wallpaperSource : skin?.wallpaper
-    const enabled = Boolean(source && (activePreview || config.wallpaperEnabled) && (skin || customSource))
+    const source = config.wallpaperSource
+    const enabled = Boolean(source && config.wallpaperEnabled)
+    const isDark = (typeof document !== 'undefined'
+      ? document.documentElement?.dataset?.hermesMode : 'dark') !== 'light'
+    const rotationGroup = activeRotationGroup(config)
+    const videoEndRotation = config.rotationEnabled && rotationGroup?.trigger === 'videoEnd' &&
+      rotationGroup.wallpaperIds.includes(config.weSelection?.id)
+    const slideIntervalMs = config.pictureSlideSeconds > 0
+      ? config.pictureSlideSeconds * 1000
+      : config.weSelection?.slideIntervalMs || null
+    const propertyDefaults = Object.fromEntries((config.weSelection?.properties || [])
+      .filter(property => property && property.name && property.type !== 'text' &&
+        property.type !== 'group' && property.value !== null && property.value !== undefined)
+      .map(property => [property.name, property.value]))
+    const effectiveUserProps = {
+      ...propertyDefaults,
+      ...(config.userProps?.[config.weSelection?.id] || {})
+    }
     const showing = this.backdrop.update({
       enabled,
-      type: customSource ? config.wallpaperType : (skin?.wallpaperType || 'image'),
+      type: config.wallpaperType,
       src: source,
+      sceneDir: config.weSelection?.dir || (config.wallpaperType === 'scene' &&
+        /^[a-zA-Z]:[\\/]/.test(source) && !/\.json$/i.test(source) ? source : null),
+      sceneManifest: config.weSelection?.manifestPath || (config.wallpaperType === 'scene' &&
+        /\.json$/i.test(source) ? source : null),
       sceneFrame: config.wallpaperType === 'scene' ? config.weSelection?.framePath : null,
-      webPreview: config.wallpaperType === 'web' ? config.weSelection?.previewPath : null,
+      webPreview: config.wallpaperType === 'web' || config.wallpaperType === 'scene'
+        ? config.weSelection?.previewPath : null,
+      slides: config.wallpaperType === 'image' ? (config.weSelection?.slides || []) : [],
+      slideIntervalMs,
       mode: config.wallpaperMode,
       fit: config.wallpaperFit,
       opacity: config.wallpaperOpacity,
       pauseOnHidden: config.pauseOnHidden,
+      pauseOnBlur: config.pauseOnBlur,
+      pauseOnBattery: config.pauseOnBattery,
       sound: config.wallpaperSound,
       volume: config.wallpaperVolume,
-      blur: activePreview?.defaultBlur ?? config.wallpaperBlur,
-      occlusion: activePreview?.defaultOcclusion ?? config.maskOcclusion,
-      isDark: renderedMode === 'dark'
+      playbackRate: config.videoPlaybackRate,
+      sceneLive: config.sceneLive,
+      sceneLiveFps: config.sceneLiveFps,
+      sceneAutoQuality: config.sceneAutoQuality,
+      sceneRenderDpr: config.sceneRenderDpr,
+      sceneVideoTexScale: config.sceneVideoTexScale,
+      transition: config.wallpaperTransition,
+      transitionDir: config.wallpaperTransitionDir,
+      transitionSpeed: config.wallpaperTransitionSpeed,
+      blur: config.wallpaperBlur,
+      occlusion: config.maskOcclusion,
+      brightness: config.backgroundBrightness,
+      contrast: config.backgroundContrast,
+      saturate: config.backgroundSaturate,
+      flip: config.wallpaperFlip,
+      layerPositionX: config.layerPositionX,
+      layerPositionY: config.layerPositionY,
+      layerScale: config.layerScale,
+      loop: !videoEndRotation,
+      userProps: Object.keys(effectiveUserProps).length ? effectiveUserProps : null,
+      isDark
     })
-    this.glass.update({ enabled: showing, glassTransparency: config.panelGlass,
-      bubbleOpacity: config.bubbleOpacity, composerFrost: config.composerFrost,
-      surfaceFrost: config.surfaceFrost })
-  }
-
-  tryOn(skin, theme) {
-    this.flushConfig()
-    this.store.startTryOn(skin, theme.themeName)
-    this.previewCleanup = theme.clearThemePreview
-    theme.previewTheme(skin.id, theme.renderedMode)
-    this.sync(theme.themeName, theme.renderedMode)
-  }
-
-  exitTryOn(theme) {
-    theme.clearThemePreview()
-    this.previewCleanup = null
-    this.store.exitTryOn()
-    this.sync(theme.themeName, theme.renderedMode)
-  }
-
-  apply(skin, theme) {
-    this.flushConfig()
-    const previousTheme = this.findSkin(theme.themeName)
-      ? this.store.$config.get().previousTheme
-      : theme.themeName
-    this.store.saveConfig(prev => ({
-      ...prev,
-      previousTheme: previousTheme || 'nous',
-      activeSkinId: skin.id,
-      wallpaperEnabled: Boolean(prev.wallpaperSource || skin.wallpaper),
-      wallpaperType: prev.wallpaperSource ? prev.wallpaperType : (skin.wallpaperType || 'image'),
-      wallpaperSource: prev.wallpaperSource,
-      wallpaperBlur: skin.defaultBlur ?? prev.wallpaperBlur,
-      maskOcclusion: skin.defaultOcclusion ?? prev.maskOcclusion
-    }))
-    theme.clearThemePreview()
-    this.previewCleanup = null
-    this.store.exitTryOn()
-    theme.setTheme(skin.id)
-    this.sync(skin.id, theme.renderedMode)
-  }
-
-  restore(theme) {
-    this.flushConfig()
-    const previous = this.store.$config.get().previousTheme
-    const target = previous && !this.findSkin(previous) ? previous : 'nous'
-    this.store.saveConfig(prev => ({ ...prev, activeSkinId: 'default', wallpaperEnabled: Boolean(prev.wallpaperSource) }))
-    theme.clearThemePreview()
-    this.previewCleanup = null
-    this.store.exitTryOn()
-    theme.setTheme(target)
-    this.sync(target, theme.renderedMode)
+    this.glass.update({
+      enabled: showing,
+      glassTransparency: config.panelGlass,
+      bubbleOpacity: config.bubbleOpacity,
+      composerFrost: config.composerFrost,
+      surfaceFrost: config.surfaceFrost,
+      saturation: config.glassSaturation,
+      border: config.glassBorder,
+      highlight: config.glassHighlight,
+      accent: config.accent,
+      glassColor: config.glassColor,
+      glassDarkSeparate: config.glassDarkSeparate,
+      glassFidelity: config.glassFidelity,
+      chatGlassFidelity: config.chatGlassFidelity,
+      sidebarGlass: config.sidebarGlass,
+      sidebarFollowGlobal: config.sidebarFollowGlobal,
+      sidebarBlur: config.sidebarBlur,
+      sidebarAlpha: config.sidebarAlpha,
+      sidebarColor: config.sidebarColor,
+      leftSidebarGlass: config.leftSidebarGlass,
+      leftSidebarCornerRadius: config.leftSidebarCornerRadius,
+      leftSidebarSquareTL: config.leftSidebarSquareTL,
+      leftSidebarSquareTR: config.leftSidebarSquareTR,
+      leftSidebarSquareBR: config.leftSidebarSquareBR,
+      leftSidebarSquareBL: config.leftSidebarSquareBL,
+      rightSidebarCornerRadius: config.rightSidebarCornerRadius,
+      rightSidebarSquareTL: config.rightSidebarSquareTL,
+      rightSidebarSquareTR: config.rightSidebarSquareTR,
+      rightSidebarSquareBR: config.rightSidebarSquareBR,
+      rightSidebarSquareBL: config.rightSidebarSquareBL,
+      titlebarGlass: config.titlebarGlass,
+      settingsWindowTransparency: config.settingsWindowTransparency,
+      settingsWindowBlur: config.settingsWindowBlur,
+      isDark
+    })
+    for (const extra of this.extras) extra.update(config)
   }
 
   changeConfig(change) {
@@ -2277,8 +2873,6 @@ class SkinController {
     this.sync()
   }
 
-  // Range input can arrive faster than the display. Apply only the newest
-  // values at the next paint; retain immediate commits for switches/imports.
   scheduleConfig(change) {
     this.pendingConfig = { ...this.pendingConfig, ...change }
     if (this.configFrame !== null) return
@@ -2307,10 +2901,1098 @@ class SkinController {
 
   destroy() {
     this.flushConfig()
-    this.previewCleanup?.()
-    this.previewCleanup = null
     this.backdrop.destroy()
     this.glass.destroy()
+    for (const extra of this.extras) extra.destroy()
+  }
+}
+
+const FONT_STYLE_ID = 'hermes-skins-font-css'
+const SURFACES = ':is([data-chat-surface], [data-slot="sidebar"], [data-slot="composer-root"], [data-panel-header], [data-slot="statusbar"])'
+const COMPONENT_SELECTORS = {
+  markdown: '[data-chat-surface]',
+  codeBlock: '[data-chat-surface] :is(pre, code, kbd)',
+  terminal: ':is([data-terminal], [data-persistent-terminal])',
+  table: '[data-chat-surface] :is(table, th, td)'
+}
+const ROLE_SELECTORS = {
+  'markdown-h1': '[data-chat-surface] h1',
+  'markdown-h2': '[data-chat-surface] h2',
+  'markdown-h3': '[data-chat-surface] h3',
+  'markdown-h4': '[data-chat-surface] h4',
+  'markdown-base': '[data-chat-surface]',
+  'markdown-small': '[data-chat-surface] :is(small, [data-slot="caption"])',
+  'markdown-code': '[data-chat-surface] :not(pre) > code',
+  'markdown-code-block': '[data-chat-surface] :is(pre, pre code)',
+  'markdown-table': '[data-chat-surface] :is(table, th, td)',
+  'markdown-table-head': '[data-chat-surface] th',
+  'xs-13': '[data-panel-header], [data-slot="statusbar"]',
+  'xxs-12': '[data-chat-surface] :is(.text-xs, small)'
+}
+const TEXT_TOKEN_ROLES = {
+  primary: '--ui-text-primary',
+  secondary: '--ui-text-secondary',
+  tertiary: '--ui-text-tertiary',
+  caption: '--ui-text-quaternary',
+  dimmed: '--ui-text-quaternary'
+}
+
+const safeFamily = value => typeof value === 'string'
+  ? value.replace(/[;{}<>"'\\\u0000-\u001f\u007f]/g, '').trim().slice(0, 200)
+  : ''
+
+function fontFamilyStack(value) {
+  const family = safeFamily(value)
+  if (!family || family === 'inherit') return 'inherit'
+  if (family.includes(',')) return family
+  return `"${family}", var(--dt-font-sans, sans-serif)`
+}
+
+function roleCss(config) {
+  const blocks = []
+  for (const [role, selector] of Object.entries(ROLE_SELECTORS)) {
+    const size = Number(config.themeSize?.[role]) || 0
+    const weight = Number(config.themeWeight?.[role]) || 0
+    const family = safeFamily(config.themeFamily?.[role])
+    const declarations = []
+    if (size >= 8 && size <= 48) declarations.push(`font-size:${size}px !important`)
+    if (weight >= 100 && weight <= 900) declarations.push(`font-weight:${weight} !important`)
+    if (family) declarations.push(`font-family:${fontFamilyStack(family)} !important`)
+    if (declarations.length) blocks.push(`${selector}{${declarations.join(';')}}`)
+  }
+  return blocks.join('\n')
+}
+
+function componentCss(config) {
+  const blocks = []
+  for (const [id, selector] of Object.entries(COMPONENT_SELECTORS)) {
+    const value = config.componentFonts?.[id]
+    if (!value) continue
+    const declarations = []
+    if (Number(value.size) >= 8) declarations.push(`font-size:${Math.round(Number(value.size))}px !important`)
+    if (Number(value.weight) >= 100) declarations.push(`font-weight:${Math.round(Number(value.weight))} !important`)
+    const family = safeFamily(value.family)
+    if (family) declarations.push(`font-family:${fontFamilyStack(family)} !important`)
+    if (declarations.length) blocks.push(`${selector}{${declarations.join(';')}}`)
+  }
+  return blocks.join('\n')
+}
+
+function colorCss(config) {
+  const blocks = []
+  for (const mode of ['light', 'dark']) {
+    const declarations = []
+    for (const [role, token] of Object.entries(TEXT_TOKEN_ROLES)) {
+      const pair = config.themeColors?.[role]
+      const color = pair?.[config.themeDarkSeparate ? mode : 'light'] || pair?.dark || pair?.light
+      if (/^#[0-9a-f]{6}$/i.test(color || '')) declarations.push(`${token}:${color}`)
+    }
+    if (declarations.length) {
+      blocks.push(`:root[data-hermes-skins-text-colors="true"][data-hermes-mode="${mode}"]{${declarations.join(';')}}`)
+    }
+  }
+  return blocks.join('\n')
+}
+
+function uiColorCss(config) {
+  if (!config.uiColorCustom) return ''
+  const accent = /^#[0-9a-f]{6}$/i.test(config.accent || '') ? config.accent : '#4f8cff'
+  const send = /^#[0-9a-f]{6}$/i.test(config.uiColorSend || '') ? config.uiColorSend : accent
+  const link = /^#[0-9a-f]{6}$/i.test(config.uiColorLink || '') ? config.uiColorLink : accent
+  const file = /^#[0-9a-f]{6}$/i.test(config.uiColorFileIcon || '') ? config.uiColorFileIcon : link
+  const tab = /^#[0-9a-f]{6}$/i.test(config.uiColorTab || '') ? config.uiColorTab : accent
+  const deep = /^#[0-9a-f]{6}$/i.test(config.uiColorDeepDiving || '') ? config.uiColorDeepDiving : accent
+  return `
+    :root[data-hermes-skins-ui-colors="true"] {
+      --we-accent:${accent};
+      --ui-accent:${accent};
+      --ui-accent-secondary:${accent};
+      --theme-primary:${accent};
+      --theme-midground:${accent};
+      --ui-blue:${accent};
+    }
+    :root[data-hermes-skins-ui-colors="true"] [data-slot="composer-root"] button[type="submit"],
+    :root[data-hermes-skins-ui-colors="true"] [data-slot="composer-root"] [data-primary] {
+      background-color:${send} !important;
+    }
+    :root[data-hermes-skins-ui-colors="true"] [data-chat-surface] a,
+    :root[data-hermes-skins-ui-colors="true"] [data-chat-surface] .text-primary {
+      color:${link} !important;
+    }
+    :root[data-hermes-skins-ui-colors="true"] [data-presented-file] svg {
+      color:${file} !important;
+    }
+    :root[data-hermes-skins-ui-colors="true"] [data-panel-header] [aria-selected="true"] {
+      color:${tab} !important;
+      border-color:${tab} !important;
+    }
+    :root[data-hermes-skins-ui-colors="true"] [data-deep-diving] {
+      color:${deep} !important;
+    }
+  `
+}
+
+/** Applies custom typography without touching Hermes' theme registry. */
+class FontController {
+  constructor({ setAccentOverride = null } = {}) {
+    this.styleEl = null
+    this.lastKey = null
+    this.setAccentOverride = setAccentOverride
+    this.lastAccent = null
+  }
+
+  update(config) {
+    if (typeof document === 'undefined') return
+    const root = document.documentElement
+    const fontOn = config.fontCustom === true
+    const colorsOn = fontOn && Object.keys(config.themeColors || {}).length > 0
+    const uiColorsOn = config.uiColorCustom === true
+    const caret = /^#[0-9a-f]{6}$/i.test(config.caretColor || '') ? config.caretColor : ''
+    const globalFamily = safeFamily(config.globalFamily)
+    const key = JSON.stringify({
+      fontOn, colorsOn, uiColorsOn, caret, globalFamily,
+      themeSize: config.themeSize, themeWeight: config.themeWeight,
+      themeFamily: config.themeFamily, componentFonts: config.componentFonts,
+      themeColors: config.themeColors, themeDarkSeparate: config.themeDarkSeparate,
+      accent: config.accent, send: config.uiColorSend, link: config.uiColorLink,
+      file: config.uiColorFileIcon, tab: config.uiColorTab, deep: config.uiColorDeepDiving
+    })
+    if (key === this.lastKey && this.styleEl?.isConnected) return
+    this.lastKey = key
+
+    if (fontOn) root.setAttribute('data-hermes-skins-font', 'true')
+    else root.removeAttribute('data-hermes-skins-font')
+    if (colorsOn) root.setAttribute('data-hermes-skins-text-colors', 'true')
+    else root.removeAttribute('data-hermes-skins-text-colors')
+    if (uiColorsOn) root.setAttribute('data-hermes-skins-ui-colors', 'true')
+    else root.removeAttribute('data-hermes-skins-ui-colors')
+
+    if (fontOn && globalFamily) root.style.setProperty('--hs-font-family', fontFamilyStack(globalFamily))
+    else root.style.removeProperty('--hs-font-family')
+    if (caret) root.style.setProperty('--hs-caret', caret)
+    else root.style.removeProperty('--hs-caret')
+
+    const baseSize = Number(config.themeSize?.['markdown-base']) || 0
+    const smallSize = Number(config.themeSize?.['markdown-small']) || 0
+    const codeSize = Number(config.themeSize?.['markdown-code-block']) || 0
+    const tokenSizes = {
+      '--conversation-text-base-size': baseSize,
+      '--conversation-text-font-size': baseSize,
+      '--conversation-caption-base-size': smallSize,
+      '--conversation-caption-font-size': smallSize,
+      '--conversation-tool-base-size': codeSize,
+      '--conversation-tool-font-size': codeSize
+    }
+    for (const [name, value] of Object.entries(tokenSizes)) {
+      if (fontOn && value >= 8) root.style.setProperty(name, `${value}px`)
+      else root.style.removeProperty(name)
+    }
+
+    if (uiColorsOn) {
+      const accent = /^#[0-9a-f]{6}$/i.test(config.accent || '') ? config.accent : null
+      if (accent && accent !== this.lastAccent) {
+        try { this.setAccentOverride?.(accent) } catch { /* SDK may be unavailable in isolated tests. */ }
+        this.lastAccent = accent
+      }
+    } else if (this.lastAccent !== null) {
+      try { this.setAccentOverride?.(null) } catch { /* ignored */ }
+      this.lastAccent = null
+    }
+
+    const css = [
+      fontOn ? `
+        :root[data-hermes-skins-font="true"] ${SURFACES} {
+          font-family:var(--hs-font-family, inherit) !important;
+        }
+        :root[data-hermes-skins-font="true"] [data-chat-surface] :is(input, textarea, [contenteditable="true"]),
+        :root[data-hermes-skins-font="true"] [data-slot="composer-root"] :is(input, textarea, [contenteditable="true"]) {
+          caret-color:var(--hs-caret, auto) !important;
+        }
+        ${roleCss(config)}
+        ${componentCss(config)}
+      ` : '',
+      caret ? `
+        :root :is(input, textarea, [contenteditable="true"]) {
+          caret-color:${caret} !important;
+        }
+      ` : '',
+      colorCss(config),
+      uiColorCss(config)
+    ].filter(Boolean).join('\n')
+
+    if (!css.trim()) {
+      this.styleEl?.remove()
+      this.styleEl = null
+      return
+    }
+    if (!this.styleEl || !this.styleEl.isConnected) {
+      this.styleEl = document.getElementById(FONT_STYLE_ID) || document.createElement('style')
+      this.styleEl.id = FONT_STYLE_ID
+      this.styleEl.dataset.plugin = 'hermes-skins'
+      if (!this.styleEl.isConnected) document.head.appendChild(this.styleEl)
+    }
+    this.styleEl.textContent = css
+  }
+
+  destroy() {
+    this.update({ fontCustom: false, uiColorCustom: false, caretColor: '' })
+    try { this.setAccentOverride?.(null) } catch { /* ignored */ }
+  }
+}
+
+const HOST_ID = 'hermes-skins-fx-layer'
+const CANVAS_ID = 'hermes-skins-fx'
+const DPR_MAX = 2
+const CLICK_LIFE_MS = 900
+const TRAIL_STEP_PX = 3
+const DUST_STEP_PX = 10
+const SPARK_COUNT = 12
+const POINT_MAX = 96
+const CLICK_MAX = 24
+const PERF_LEVELS = 3
+const TRAIL_BANDS = [2, 4, 8]
+const MIN_GAP = [33, 0, 0]
+const SLOW_FRAME_MS = 24
+const DOWN_RUN = 6
+const UP_RUN = 90
+const UI_SELECTOR = 'button, a, input, select, textarea, label, [role="button"], [contenteditable="true"], [role="dialog"], [role="menu"], [role="listbox"]'
+const FALLBACK_COLOR = '#4f8cff'
+
+const fxClamp = (value, min, max, fallback) => {
+  const number = Number(value)
+  return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback
+}
+
+/** Pointer click/trail effects drawn between the wallpaper and the app shell. */
+class FxOverlay {
+  constructor() {
+    this.host = null
+    this.canvas = null
+    this.ctx = null
+    this.config = null
+    this.points = []
+    this.clicks = []
+    this.frame = null
+    this.bound = false
+    this.hue = 0
+    this.seed = 0
+    this.accent = ''
+    this.perfLevel = PERF_LEVELS - 1
+    this.slowRun = 0
+    this.fastRun = 0
+    this.lastFrameAt = 0
+    this.lastDrawAt = 0
+    this.lastWidth = 0
+    this.lastHeight = 0
+    this.onMove = event => {
+      if (!this.config?.fxEnabled || !this.config.fxTrail) return
+      const points = typeof event.getCoalescedEvents === 'function'
+        ? (event.getCoalescedEvents() || []) : []
+      const samples = points.length ? points : [event]
+      for (const sample of samples) this.pushTrail(sample.clientX, sample.clientY)
+      this.kick()
+    }
+    this.onDown = event => {
+      if (!this.config?.fxEnabled || !this.config.fxClick) return
+      const target = event.target
+      try {
+        if (target?.closest?.(UI_SELECTOR)) return
+      } catch { /* Prefer drawing if the target cannot be inspected. */ }
+      this.seed += 1
+      this.clicks.push({
+        x: event.clientX, y: event.clientY, t0: performance.now(),
+        seed: this.seed, hue: this.nextHue()
+      })
+      if (this.clicks.length > CLICK_MAX) this.clicks.splice(0, this.clicks.length - CLICK_MAX)
+      this.kick()
+    }
+    this.onResize = () => this.kick()
+    this.onVisibility = () => {
+      if (document.hidden) this.cancelFrame()
+      else this.kick()
+    }
+  }
+
+  nextHue() {
+    this.hue = (this.hue + 24) % 360
+    return this.hue
+  }
+
+  settings() {
+    const config = this.config || {}
+    return {
+      on: config.fxEnabled === true,
+      click: config.fxClick !== false,
+      clickStyle: config.fxClickStyle === 'spark' || config.fxClickStyle === 'both'
+        ? config.fxClickStyle : 'ripple',
+      size: fxClamp(config.fxClickSize, 40, 400, 140),
+      clickGlow: fxClamp(config.fxClickGlow, 0, 100, 60),
+      trail: config.fxTrail !== false,
+      trailStyle: config.fxTrailStyle === 'dust' ? 'dust' : 'comet',
+      lifeMs: fxClamp(config.fxTrailLength, 80, 2000, 420),
+      width: fxClamp(config.fxTrailWidth, 1, 12, 3),
+      trailGlow: fxClamp(config.fxTrailGlow, 0, 100, 60),
+      opacity: fxClamp(config.fxOpacity, 10, 100, 85) / 100,
+      blend: ['screen', 'normal', 'overlay', 'multiply', 'lighten'].includes(config.fxBlend)
+        ? config.fxBlend : 'screen',
+      colorMode: ['accent', 'rainbow', 'custom'].includes(config.fxColorMode)
+        ? config.fxColorMode : 'accent',
+      color: /^#[0-9a-f]{6}$/i.test(config.fxColor || '') ? config.fxColor : FALLBACK_COLOR
+    }
+  }
+
+  ensureHost() {
+    if (this.host?.isConnected || typeof document === 'undefined' || !document.body) return
+    this.host = document.createElement('div')
+    this.host.id = HOST_ID
+    this.host.setAttribute('aria-hidden', 'true')
+    this.host.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:1;'
+    this.canvas = document.createElement('canvas')
+    this.canvas.id = CANVAS_ID
+    this.canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;'
+    this.host.appendChild(this.canvas)
+    const shell = document.querySelector('[data-contrib-shell]')
+    if (shell?.parentNode === document.body) document.body.insertBefore(this.host, shell)
+    else document.body.appendChild(this.host)
+    this.ctx = this.canvas.getContext('2d')
+    this.bind()
+  }
+
+  removeHost() {
+    this.host?.remove()
+    this.host = null
+    this.canvas = null
+    this.ctx = null
+    this.lastWidth = 0
+    this.lastHeight = 0
+  }
+
+  bind() {
+    if (this.bound || typeof document === 'undefined') return
+    document.addEventListener('pointermove', this.onMove, { passive: true })
+    document.addEventListener('pointerdown', this.onDown, { passive: true })
+    document.addEventListener('visibilitychange', this.onVisibility, { passive: true })
+    window.addEventListener('resize', this.onResize, { passive: true })
+    this.bound = true
+  }
+
+  unbind() {
+    if (!this.bound) return
+    document.removeEventListener('pointermove', this.onMove)
+    document.removeEventListener('pointerdown', this.onDown)
+    document.removeEventListener('visibilitychange', this.onVisibility)
+    window.removeEventListener('resize', this.onResize)
+    this.bound = false
+  }
+
+  pushTrail(x, y) {
+    const last = this.points.at(-1)
+    if (last && Math.hypot(x - last.x, y - last.y) < TRAIL_STEP_PX) return
+    this.points.push({ x, y, t: performance.now(), hue: this.nextHue() })
+    if (this.points.length > POINT_MAX) this.points.splice(0, this.points.length - POINT_MAX)
+  }
+
+  update(config) {
+    this.config = config
+    if (typeof document === 'undefined') return
+    const settings = this.settings()
+    if (!settings.on || (!settings.click && !settings.trail)) {
+      this.stop()
+      return
+    }
+    this.accent = ''
+    this.ensureHost()
+    this.start()
+  }
+
+  accentColor() {
+    if (this.accent) return this.accent
+    try {
+      const styles = getComputedStyle(document.documentElement)
+      this.accent = styles.getPropertyValue('--we-accent').trim() ||
+        styles.getPropertyValue('--dt-primary').trim() ||
+        styles.getPropertyValue('--primary').trim() || FALLBACK_COLOR
+    } catch {
+      this.accent = FALLBACK_COLOR
+    }
+    return this.accent
+  }
+
+  effectColor(settings, hue, now) {
+    if (settings.colorMode === 'custom') return settings.color
+    if (settings.colorMode === 'rainbow') {
+      const current = (((hue + now / 12) % 360) + 360) % 360
+      return `hsl(${current.toFixed(1)}, 92%, 66%)`
+    }
+    return this.accentColor()
+  }
+
+  kick() {
+    if (this.frame !== null || !this.host || document.hidden) return
+    this.frame = requestAnimationFrame(now => this.draw(now))
+  }
+
+  cancelFrame() {
+    if (this.frame !== null) cancelAnimationFrame(this.frame)
+    this.frame = null
+  }
+
+  start() {
+    this.kick()
+  }
+
+  stop() {
+    this.cancelFrame()
+    this.unbind()
+    this.removeHost()
+    this.points = []
+    this.clicks = []
+    this.accent = ''
+    this.perfLevel = PERF_LEVELS - 1
+    this.slowRun = 0
+    this.fastRun = 0
+    this.lastFrameAt = 0
+    this.lastDrawAt = 0
+  }
+
+  resize() {
+    const width = Math.max(1, Math.round(window.innerWidth || 1))
+    const height = Math.max(1, Math.round(window.innerHeight || 1))
+    const dpr = Math.min(DPR_MAX, window.devicePixelRatio || 1)
+    const pixelWidth = Math.round(width * dpr)
+    const pixelHeight = Math.round(height * dpr)
+    if (this.canvas.width !== pixelWidth || this.canvas.height !== pixelHeight) {
+      this.canvas.width = pixelWidth
+      this.canvas.height = pixelHeight
+      this.canvas.style.width = `${width}px`
+      this.canvas.style.height = `${height}px`
+    }
+    this.ctx?.setTransform(dpr, 0, 0, dpr, 0, 0)
+    this.lastWidth = width
+    this.lastHeight = height
+  }
+
+  setHostStyle(property, value) {
+    if (this.host && this.host.style.getPropertyValue(property) !== value) {
+      this.host.style.setProperty(property, value)
+    }
+  }
+
+  updatePerformance(delta) {
+    if (!(delta > 0)) return
+    if (delta > SLOW_FRAME_MS) {
+      this.slowRun += 1
+      this.fastRun = 0
+      if (this.slowRun >= DOWN_RUN && this.perfLevel > 0) {
+        this.perfLevel -= 1
+        this.slowRun = 0
+      }
+    } else {
+      this.fastRun += 1
+      this.slowRun = 0
+      if (this.fastRun >= UP_RUN && this.perfLevel < PERF_LEVELS - 1) {
+        this.perfLevel += 1
+        this.fastRun = 0
+      }
+    }
+  }
+
+  sparkAngle(seed, index) {
+    const noise = ((seed * 9301 + index * 49297) % 233280) / 233280
+    return (index / SPARK_COUNT) * Math.PI * 2 + noise * 0.6
+  }
+
+  drawClicks(ctx, now, settings) {
+    if (!settings.click) return
+    ctx.lineCap = 'round'
+    for (const click of this.clicks) {
+      const progress = Math.min(1, Math.max(0, (now - click.t0) / CLICK_LIFE_MS))
+      if (progress >= 1) continue
+      const color = this.effectColor(settings, click.hue, now)
+      if (settings.clickStyle !== 'spark') {
+        for (let ring = 0; ring < 2; ring += 1) {
+          const q = Math.min(1, progress - ring * 0.18)
+          if (q <= 0) continue
+          const fade = (1 - q) * (1 - q)
+          ctx.globalAlpha = 0.9 * fade
+          ctx.strokeStyle = color
+          ctx.shadowColor = color
+          ctx.shadowBlur = settings.clickGlow * 0.4 * fade
+          ctx.lineWidth = Math.max(0.6, 3 * (1 - q))
+          ctx.beginPath()
+          const radius = Math.max(0.5, settings.size * (1 - Math.pow(1 - q, 3)) * (ring ? 0.78 : 1))
+          ctx.arc(click.x, click.y, radius, 0, Math.PI * 2)
+          ctx.stroke()
+        }
+      }
+      if (settings.clickStyle !== 'ripple') {
+        const ease = 1 - Math.pow(1 - progress, 3)
+        const fade = (1 - progress) * (1 - progress)
+        ctx.strokeStyle = color
+        ctx.shadowColor = color
+        ctx.shadowBlur = settings.clickGlow * 0.35 * fade
+        ctx.lineWidth = Math.max(0.6, settings.width * 0.7 * (1 - progress))
+        ctx.globalAlpha = 0.9 * fade
+        ctx.beginPath()
+        for (let index = 0; index < SPARK_COUNT; index += 1) {
+          const angle = this.sparkAngle(click.seed, index)
+          const reach = settings.size *
+            (0.45 + 0.55 * (((click.seed * 31 + index * 37) % 100) / 100)) * ease
+          const cos = Math.cos(angle)
+          const sin = Math.sin(angle)
+          ctx.moveTo(click.x + cos * reach * 0.7, click.y + sin * reach * 0.7)
+          ctx.lineTo(click.x + cos * reach, click.y + sin * reach)
+        }
+        ctx.stroke()
+        const flash = Math.max(0, 1 - progress * 3)
+        if (flash > 0) {
+          ctx.globalAlpha = 0.75 * flash
+          ctx.fillStyle = '#ffffff'
+          ctx.shadowColor = color
+          ctx.shadowBlur = settings.clickGlow * 0.5 * flash
+          ctx.beginPath()
+          ctx.arc(click.x, click.y, Math.max(0.5, settings.width * 1.6 * flash + 1), 0, Math.PI * 2)
+          ctx.fill()
+        }
+      }
+    }
+  }
+
+  drawTrail(ctx, now, settings) {
+    if (!settings.trail || this.points.length < 2) return
+    const life = settings.lifeMs
+    const bands = TRAIL_BANDS[this.perfLevel] || TRAIL_BANDS[0]
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+    if (settings.trailStyle === 'dust') {
+      let distance = 0
+      const buckets = []
+      for (let index = 1; index < this.points.length; index += 1) {
+        const point = this.points[index]
+        const previous = this.points[index - 1]
+        distance += Math.abs(point.x - previous.x) + Math.abs(point.y - previous.y)
+        if (distance < DUST_STEP_PX) continue
+        distance = 0
+        const fade = 1 - (now - point.t) / life
+        if (fade <= 0) continue
+        const band = Math.min(bands - 1, Math.max(0, Math.floor((1 - fade) * bands)))
+        if (!buckets[band]) buckets[band] = { points: [], fade: 0, count: 0 }
+        buckets[band].points.push(point)
+        buckets[band].fade += fade
+        buckets[band].count += 1
+      }
+      for (const bucket of buckets) {
+        if (!bucket) continue
+        const fade = bucket.fade / bucket.count
+        ctx.globalAlpha = Math.max(0, Math.min(1, fade * fade * 0.9))
+        ctx.fillStyle = this.effectColor(settings, bucket.points[0].hue, now)
+        ctx.shadowColor = ctx.fillStyle
+        ctx.shadowBlur = settings.trailGlow * fade * 0.4
+        const radius = Math.max(0.6, settings.width * (0.45 + fade * 0.75))
+        ctx.beginPath()
+        for (const point of bucket.points) {
+          ctx.moveTo(point.x + radius, point.y)
+          ctx.arc(point.x, point.y, radius, 0, Math.PI * 2)
+        }
+        ctx.fill()
+      }
+      return
+    }
+    const buckets = []
+    for (let index = 1; index < this.points.length; index += 1) {
+      const a = this.points[index - 1]
+      const b = this.points[index]
+      const fade = 1 - (now - b.t) / life
+      if (fade <= 0) continue
+      const band = Math.min(bands - 1, Math.max(0, Math.floor((1 - fade) * bands)))
+      if (!buckets[band]) buckets[band] = { segments: [], fade: 0, count: 0, hue: b.hue }
+      buckets[band].segments.push(a, b)
+      buckets[band].fade += fade
+      buckets[band].count += 1
+    }
+    for (const bucket of buckets) {
+      if (!bucket) continue
+      const fade = bucket.fade / bucket.count
+      ctx.globalAlpha = Math.max(0, Math.min(1, fade * fade * 0.9))
+      ctx.strokeStyle = this.effectColor(settings, bucket.hue, now)
+      ctx.shadowColor = ctx.strokeStyle
+      ctx.shadowBlur = settings.trailGlow * fade * 0.35
+      ctx.lineWidth = Math.max(0.4, settings.width * (0.25 + fade * 0.75))
+      ctx.beginPath()
+      for (let index = 0; index < bucket.segments.length; index += 2) {
+        ctx.moveTo(bucket.segments[index].x, bucket.segments[index].y)
+        ctx.lineTo(bucket.segments[index + 1].x, bucket.segments[index + 1].y)
+      }
+      ctx.stroke()
+    }
+  }
+
+  draw(now) {
+    this.frame = null
+    const settings = this.settings()
+    if (!settings.on || !this.host || !this.canvas) return
+    if (this.lastFrameAt) this.updatePerformance(now - this.lastFrameAt)
+    this.lastFrameAt = now
+    const gap = MIN_GAP[this.perfLevel] || 0
+    if (gap > 0 && this.lastDrawAt && now - this.lastDrawAt < gap) {
+      this.kick()
+      return
+    }
+    this.lastDrawAt = now
+    this.points = this.points.filter(point => now - point.t <= settings.lifeMs)
+    this.clicks = this.clicks.filter(click => now - click.t0 <= CLICK_LIFE_MS)
+    this.resize()
+    this.setHostStyle('mix-blend-mode', settings.blend)
+    this.setHostStyle('opacity', String(settings.opacity))
+    const ctx = this.ctx
+    if (!ctx) return
+    ctx.clearRect(0, 0, this.lastWidth, this.lastHeight)
+    const active = this.points.length > 1 || this.clicks.length > 0
+    if (active) {
+      ctx.globalCompositeOperation = 'lighter'
+      this.drawTrail(ctx, now, settings)
+      this.drawClicks(ctx, now, settings)
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.globalAlpha = 1
+      ctx.shadowBlur = 0
+      this.kick()
+    }
+  }
+
+  destroy() {
+    this.stop()
+    this.config = null
+  }
+}
+
+const FRAME_MS = 1000 / 60
+const DT_MAX = 64
+const SETTLE_VISIBLE_PX = 0.25
+const IDLE_MS = 180
+const IDLE_VISIBLE_PX = 1
+const TARGETS_MS = 500
+const BUBBLE_MAX = 24
+const PLUGIN_DEFAULT_DEPTH = 1
+const UI_SKIP_SCOPE = '[data-slot="settings.section"], [data-slot="plugins.bundle.config"]'
+const UI_SKIP_PREFIX = ['settings.', 'plugins.', 'shell.']
+const UI_SKIP = ['root', 'main', 'rightbar', 'conversation.view', 'sidebar', 'main.conversation']
+const UI_GROUPS = {
+  chat: '[data-chat-surface], [data-slot="conversation.view"]',
+  composer: '[data-slot="composer-root"], [data-slot="composer-surface"]',
+  sidebar: '[data-slot="sidebar"]',
+  bubble: '[data-chat-flow-kind="user"], [data-chat-flow-kind="steering"], [data-message-role="user"]'
+}
+
+const parallaxClamp = (value, min, max, fallback) => {
+  const number = Number(value)
+  return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback
+}
+
+function hasFixedDescendant(element) {
+  if (!element || typeof element.querySelectorAll !== 'function') return false
+  let count = 0
+  try {
+    for (const node of element.querySelectorAll('*')) {
+      if (++count > 400) break
+      if (getComputedStyle(node).position === 'fixed') return true
+    }
+  } catch { /* Cross-origin or detached nodes are not movable. */ }
+  return false
+}
+
+function writeTranslate(element, x, y, independent = true) {
+  if (!element?.style) return false
+  const value = `${x.toFixed(2)}px ${y.toFixed(2)}px`
+  if (element.dataset.hsParallaxValue === value) return false
+  element.dataset.hsParallaxValue = value
+  if (independent && 'translate' in element.style) {
+    element.style.translate = value
+  } else {
+    element.style.transform = `translate3d(${value}, 0)`
+  }
+  return true
+}
+
+function clearTranslate(element) {
+  if (!element?.style) return
+  if (element.style.translate) element.style.removeProperty('translate')
+  if (element.dataset.hsParallaxTransform === '1') element.style.removeProperty('transform')
+  delete element.dataset.hsParallaxValue
+  delete element.dataset.hsParallaxTransform
+  if (element.style.willChange === 'translate') element.style.removeProperty('will-change')
+}
+
+/** Pointer-driven background and optional surface parallax. */
+class ParallaxController {
+  constructor() {
+    this.config = null
+    this.x = 0
+    this.y = 0
+    this.targetX = 0
+    this.targetY = 0
+    this.frame = null
+    this.bound = false
+    this.seen = false
+    this.lastMs = 0
+    this.moveMs = 0
+    this.viewportWidth = 0
+    this.viewportHeight = 0
+    this.dpr = 1
+    this.backgroundTargets = []
+    this.uiTargets = []
+    this.pluginTargets = []
+    this.targetsAt = 0
+    this.onMove = event => {
+      if (!this.config?.parallaxEnabled) return
+      this.x = event.clientX
+      this.y = event.clientY
+      this.seen = true
+      this.moveMs = performance.now()
+      this.kick()
+    }
+    this.onLeave = () => {
+      this.targetX = 0
+      this.targetY = 0
+      this.kick()
+    }
+    this.onResize = () => {
+      this.readViewport()
+      this.refreshTargets(true)
+      this.kick()
+    }
+    this.onVisibility = () => {
+      if (document.hidden) this.cancelFrame()
+      else this.kick()
+    }
+  }
+
+  readViewport() {
+    this.viewportWidth = Math.max(1, window.innerWidth || 1)
+    this.viewportHeight = Math.max(1, window.innerHeight || 1)
+    this.dpr = Math.max(1, window.devicePixelRatio || 1)
+  }
+
+  bind() {
+    if (this.bound) return
+    document.addEventListener('pointermove', this.onMove, { passive: true })
+    document.addEventListener('pointerleave', this.onLeave, { passive: true })
+    document.addEventListener('visibilitychange', this.onVisibility, { passive: true })
+    window.addEventListener('blur', this.onLeave)
+    window.addEventListener('resize', this.onResize, { passive: true })
+    this.bound = true
+  }
+
+  unbind() {
+    if (!this.bound) return
+    document.removeEventListener('pointermove', this.onMove)
+    document.removeEventListener('pointerleave', this.onLeave)
+    document.removeEventListener('visibilitychange', this.onVisibility)
+    window.removeEventListener('blur', this.onLeave)
+    window.removeEventListener('resize', this.onResize)
+    this.bound = false
+  }
+
+  refreshTargets(force = false) {
+    const now = performance.now()
+    if (!force && this.targetsAt && now - this.targetsAt < TARGETS_MS) return
+    this.targetsAt = now
+    this.backgroundTargets = [...document.querySelectorAll('.hs-backdrop-surface')]
+    const config = this.config || {}
+    const uiTargets = []
+    if (config.parallaxUi) {
+      for (const [kind, selector] of Object.entries(UI_GROUPS)) {
+        const elements = [...document.querySelectorAll(selector)]
+        const limited = kind === 'bubble' ? elements.slice(-BUBBLE_MAX) : elements
+        for (const element of limited) {
+          if (uiTargets.some(record => record.element === element)) continue
+          uiTargets.push({
+            element,
+            kind,
+            depth: kind === 'chat' ? config.parallaxUiChatDepth
+              : kind === 'composer' ? config.parallaxUiComposerDepth
+              : kind === 'sidebar' ? config.parallaxUiSidebarDepth
+              : config.parallaxUiBubbleDepth,
+            blocked: hasFixedDescendant(element)
+          })
+        }
+      }
+    }
+    this.uiTargets = uiTargets
+    const pluginTargets = []
+    if (config.parallaxPlugin) {
+      const taken = new Set(uiTargets.map(record => record.element))
+      for (const element of document.querySelectorAll('[data-slot]')) {
+        const slot = element.getAttribute('data-slot') || ''
+        if (!slot || UI_SKIP.includes(slot) || UI_SKIP_PREFIX.some(prefix => slot.startsWith(prefix))) continue
+        try {
+          if (element.closest(UI_SKIP_SCOPE)) continue
+        } catch { continue }
+        if ([...taken].some(node => node === element || node.contains?.(element) || element.contains?.(node))) continue
+        if (!element.getBoundingClientRect().width || !element.getBoundingClientRect().height) continue
+        const depth = config.parallaxPluginDepths?.[slot] ?? PLUGIN_DEFAULT_DEPTH
+        if (!(Number(depth) > 0) || hasFixedDescendant(element)) continue
+        pluginTargets.push({ element, kind: 'plugin', depth, blocked: false })
+        taken.add(element)
+      }
+    }
+    this.pluginTargets = pluginTargets
+  }
+
+  kick() {
+    if (this.frame !== null || !this.config?.parallaxEnabled || document.hidden) return
+    if (!this.viewportWidth || !this.viewportHeight) this.readViewport()
+    this.refreshTargets(false)
+    this.frame = requestAnimationFrame(now => this.tick(now))
+  }
+
+  cancelFrame() {
+    if (this.frame !== null) cancelAnimationFrame(this.frame)
+    this.frame = null
+    this.lastMs = 0
+  }
+
+  start() {
+    this.readViewport()
+    this.bind()
+    this.refreshTargets(true)
+    this.kick()
+  }
+
+  stop() {
+    this.cancelFrame()
+    this.unbind()
+    for (const element of this.backgroundTargets) {
+      clearTranslate(element)
+      element.style.removeProperty('scale')
+    }
+    for (const element of [...this.uiTargets, ...this.pluginTargets]) clearTranslate(element.element)
+    this.backgroundTargets = []
+    this.uiTargets = []
+    this.pluginTargets = []
+    this.x = 0
+    this.y = 0
+    this.targetX = 0
+    this.targetY = 0
+    this.seen = false
+    this.lastMs = 0
+    this.moveMs = 0
+    this.targetsAt = 0
+  }
+
+  update(config) {
+    this.config = config
+    if (typeof document === 'undefined') return
+    const root = document.documentElement
+    if (!config.parallaxEnabled) {
+      root.removeAttribute('data-hermes-skins-parallax')
+      this.stop()
+      return
+    }
+    root.setAttribute('data-hermes-skins-parallax', 'true')
+    this.start()
+  }
+
+  tick(now = performance.now()) {
+    this.frame = null
+    const config = this.config
+    if (!config?.parallaxEnabled) return
+    if (!this.backgroundTargets.length && !this.uiTargets.length && !this.pluginTargets.length) {
+      this.refreshTargets(true)
+    }
+    const width = this.viewportWidth
+    const height = this.viewportHeight
+    const cx = this.seen ? this.x : width / 2
+    const cy = this.seen ? this.y : height / 2
+    const targetX = -(cx - width / 2)
+    const targetY = -(cy - height / 2)
+    const smooth = parallaxClamp(config.parallaxSmooth, 0, 98, 85)
+    const alpha = 1 - smooth / 100
+    const dt = this.lastMs ? Math.min(DT_MAX, Math.max(1, now - this.lastMs)) : FRAME_MS
+    this.lastMs = now
+    const factor = alpha <= 0 ? 1 : 1 - Math.pow(1 - alpha, dt / FRAME_MS)
+    this.targetX += (targetX - this.targetX) * factor
+    this.targetY += (targetY - this.targetY) * factor
+
+    const diagonal = Math.hypot(width, height)
+    const bgDepth = parallaxClamp(config.parallaxBg, 0, 10, 1)
+    const bgX = this.targetX / Math.max(1, width) * bgDepth * diagonal
+    const bgY = this.targetY / Math.max(1, height) * bgDepth * diagonal
+    const bgScale = 1 + bgDepth / 50
+    for (const element of this.backgroundTargets) {
+      if (!element.isConnected) continue
+      writeTranslate(element, bgX, bgY)
+      if (element.style.scale !== String(bgScale)) element.style.scale = String(bgScale)
+    }
+
+    const applyGroup = record => {
+      const element = record.element
+      if (!element?.isConnected) return
+      const ratio = record.blocked ? 0 : parallaxClamp(record.depth, 0, 10, 1)
+      let dx = this.targetX / Math.max(1, width) * ratio * diagonal
+      let dy = this.targetY / Math.max(1, height) * ratio * diagonal
+      dx = Math.round(dx * this.dpr) / this.dpr
+      dy = Math.round(dy * this.dpr) / this.dpr
+      if (Math.abs(dx) < 0.25 && Math.abs(dy) < 0.25) {
+        clearTranslate(element)
+      } else {
+        element.style.willChange = 'translate'
+        writeTranslate(element, dx, dy)
+      }
+    }
+    for (const record of this.uiTargets) applyGroup(record)
+    for (const record of this.pluginTargets) applyGroup(record)
+
+    const idle = this.moveMs > 0 && now - this.moveMs >= IDLE_MS
+    const remaining = Math.hypot(targetX - this.targetX, targetY - this.targetY) /
+      Math.max(1, width) * diagonal
+    if (remaining > (idle ? IDLE_VISIBLE_PX : SETTLE_VISIBLE_PX)) this.kick()
+  }
+
+  destroy() {
+    this.stop()
+    this.config = null
+    if (typeof document !== 'undefined') {
+      document.documentElement.removeAttribute('data-hermes-skins-parallax')
+    }
+  }
+}
+
+const THEME_FOLLOW_STYLE_ID = 'hermes-skins-theme-follow-css'
+
+const rgbToHex = (r, g, b) => `#${[r, g, b]
+  .map(value => Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, '0'))
+  .join('')}`
+
+function adjustForAccent(r, g, b) {
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  if (max < 48) return [127, 140, 170]
+  if (max - min < 18) return [130, 145, 170]
+  const scale = 190 / Math.max(1, max)
+  return [r * scale, g * scale, b * scale]
+}
+
+/**
+ * Samples the current wallpaper preview and publishes a restrained dominant
+ * colour. Kept as a separate root stylesheet so disabling it restores the
+ * accent chosen by the plugin/UI-colour layer immediately.
+ */
+class ThemeFollowController {
+  constructor() {
+    this.styleEl = null
+    this.lastKey = ''
+  }
+
+  update(config) {
+    if (typeof document === 'undefined') return
+    if (!config.themeFollow) {
+      document.documentElement.removeAttribute('data-hermes-skins-theme-follow')
+      this.styleEl?.remove()
+      this.styleEl = null
+      this.lastKey = ''
+      return
+    }
+    const source = config.weSelection?.previewPath ||
+      (config.wallpaperType === 'image' ? config.wallpaperSource : '')
+    if (!source) return
+    const key = `${source}|${config.weSelection?.id || ''}`
+    if (key === this.lastKey) return
+    this.lastKey = key
+    void this.sample(source).then(color => {
+      if (!color || this.lastKey !== key || !document.documentElement) return
+      if (!this.styleEl || !this.styleEl.isConnected) {
+        this.styleEl = document.getElementById(THEME_FOLLOW_STYLE_ID) || document.createElement('style')
+        this.styleEl.id = THEME_FOLLOW_STYLE_ID
+        this.styleEl.dataset.plugin = 'hermes-skins'
+        if (!this.styleEl.isConnected) document.head.appendChild(this.styleEl)
+      }
+      document.documentElement.setAttribute('data-hermes-skins-theme-follow', 'true')
+      this.styleEl.textContent = `
+        :root[data-hermes-skins-theme-follow="true"] {
+          --we-accent:${color};
+          --hs-theme-follow-accent:${color};
+          --ui-accent:${color};
+          --ui-accent-secondary:${color};
+          --theme-primary:${color};
+          --theme-midground:${color};
+          --ui-blue:${color};
+        }
+      `
+    })
+  }
+
+  async sample(source) {
+    let url = source
+    if (/^[A-Za-z]:[\\/]/.test(source)) {
+      try {
+        const data = await window.hermesDesktop?.readFileDataUrl?.(source)
+        if (typeof data === 'string' && data.startsWith('data:image/')) url = data
+        else return null
+      } catch {
+        return null
+      }
+    }
+    if (!/^(https?:|data:image\/|file:\/\/)/i.test(url)) return null
+    try {
+      const image = new Image()
+      image.decoding = 'async'
+      if (/^https?:/i.test(url)) image.crossOrigin = 'anonymous'
+      await new Promise((resolve, reject) => {
+        let settled = false
+        const finish = () => {
+          if (settled) return
+          settled = true
+          resolve()
+        }
+        const fail = () => {
+          if (settled) return
+          settled = true
+          reject(new Error('preview image failed'))
+        }
+        image.onload = finish
+        image.onerror = fail
+        image.src = url
+        if (image.complete && image.naturalWidth > 0) finish()
+        setTimeout(() => {
+          if (!settled) fail()
+        }, 5000)
+      })
+      const canvas = document.createElement('canvas')
+      canvas.width = 48
+      canvas.height = 27
+      const ctx = canvas.getContext('2d', { willReadFrequently: true })
+      if (!ctx) return null
+      ctx.drawImage(image, 0, 0, canvas.width, canvas.height)
+      const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data
+      let r = 0
+      let g = 0
+      let b = 0
+      let weight = 0
+      for (let index = 0; index < pixels.length; index += 4) {
+        if (pixels[index + 3] < 160) continue
+        const max = Math.max(pixels[index], pixels[index + 1], pixels[index + 2])
+        const min = Math.min(pixels[index], pixels[index + 1], pixels[index + 2])
+        const saturation = max - min
+        const current = 1 + saturation / 48
+        r += pixels[index] * current
+        g += pixels[index + 1] * current
+        b += pixels[index + 2] * current
+        weight += current
+      }
+      if (!weight) return null
+      return rgbToHex(...adjustForAccent(r / weight, g / weight, b / weight))
+    } catch {
+      return null
+    }
+  }
+
+  destroy() {
+    this.lastKey = ''
+    this.styleEl?.remove()
+    this.styleEl = null
+    if (typeof document !== 'undefined') {
+      document.documentElement.removeAttribute('data-hermes-skins-theme-follow')
+    }
   }
 }
 
@@ -2337,14 +4019,10 @@ class SkinController {
  */
 const THEME_ATTRS = ['class', 'data-hermes-mode', 'data-hermes-theme', 'data-hermes-terminal-alpha']
 
-function watchRootTheme(store, controller) {
+function watchRootTheme(controller) {
   if (typeof document === 'undefined' || typeof MutationObserver !== 'function') return () => {}
   const root = document.documentElement
-  const stateKey = () => {
-    const previewing = Boolean(store.$tryOnSkin.get())
-    const themeName = previewing ? '~preview' : (root.dataset.hermesTheme || null)
-    return `${themeName}:${root.dataset.hermesMode || 'dark'}:${root.dataset.hermesTerminalAlpha || 'false'}`
-  }
+  const stateKey = () => `${root.dataset.hermesMode || 'dark'}:${root.dataset.hermesTerminalAlpha || 'false'}`
 
   let queued = false
   let disposed = false
@@ -2356,9 +4034,7 @@ function watchRootTheme(store, controller) {
     const key = stateKey()
     if (key === lastKey) return
     lastKey = key
-    const previewing = Boolean(store.$tryOnSkin.get())
-    controller.sync(previewing ? undefined : (root.dataset.hermesTheme || null),
-      root.dataset.hermesMode || 'dark')
+    controller.sync()
   }
 
   const observer = new MutationObserver(() => {
@@ -2434,6 +4110,129 @@ async function mapLimit(items, limit, fn) {
   return results
 }
 
+const SLIDE_SWITCH_MS = { 1: 60_000, 2: 300_000, 3: 600_000, 4: 1_800_000, 5: 3_600_000 }
+const PROP_TYPES = new Set([
+  'color', 'bool', 'slider', 'combo', 'text', 'textinput', 'file', 'directory', 'group', 'other'
+])
+const PROP_LANGS = ['zh-chs', 'zh-cht', 'en-us']
+
+const stripHtml = value => typeof value !== 'string' ? '' : value
+  .replace(/<br\s*\/?>/gi, '\n')
+  .replace(/<[^>]*>/g, '')
+  .replace(/&nbsp;/gi, ' ')
+  .replace(/&amp;/gi, '&')
+  .replace(/&lt;/gi, '<')
+  .replace(/&gt;/gi, '>')
+  .replace(/&quot;/gi, '"')
+  .replace(/&#0?39;|&apos;/gi, "'")
+  .trim()
+
+function propertyText(project, key, fallback) {
+  const table = project?.general?.localization
+  if (table && typeof table === 'object') {
+    for (const language of PROP_LANGS) {
+      const entry = Object.entries(table).find(([name]) => name.toLowerCase() === language)?.[1]
+      if (entry && typeof entry === 'object' && typeof entry[key] === 'string') {
+        const localized = stripHtml(entry[key])
+        if (localized) return localized
+      }
+    }
+  }
+  return stripHtml(key) || fallback
+}
+
+function propertyDefault(type, definition) {
+  if (!definition || !('value' in definition)) return null
+  const value = definition.value
+  if (value === undefined || value === null) return null
+  if (type === 'bool') return typeof value === 'boolean' ? value : null
+  if (type === 'slider') return Number.isFinite(Number(value)) ? Number(value) : null
+  if (type === 'combo') return value
+  if (type === 'color') return typeof value === 'string' ? value : null
+  return typeof value === 'string' ? value : JSON.stringify(value)
+}
+
+function parseProjectProperties(project) {
+  const source = project?.general?.properties
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return []
+  return Object.entries(source)
+    .filter(([, definition]) => definition && typeof definition === 'object' &&
+      typeof definition.type === 'string')
+    .sort((left, right) => {
+      const order = Number(left[1].order || 0) - Number(right[1].order || 0)
+      return order || (left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0)
+    })
+    .slice(0, 100)
+    .map(([name, definition]) => {
+      const rawType = String(definition.type || 'other').toLowerCase()
+      const type = PROP_TYPES.has(rawType) ? rawType : 'other'
+      const entry = {
+        name: name.slice(0, 120),
+        type,
+        text: propertyText(project, typeof definition.text === 'string' ? definition.text : name, name).slice(0, 240),
+        order: Number.isFinite(Number(definition.order)) ? Number(definition.order) : 0,
+        value: propertyDefault(type, definition),
+        hidden: definition.editable === false
+      }
+      if (Array.isArray(definition.options)) {
+        entry.options = definition.options
+          .filter(option => option && typeof option === 'object' && 'value' in option)
+          .slice(0, 200)
+          .map(option => ({
+            label: propertyText(project, typeof option.label === 'string' ? option.label : '',
+              String(option.value)).slice(0, 160),
+            value: option.value
+          }))
+      }
+      for (const key of ['min', 'max', 'step', 'precision']) {
+        if (Number.isFinite(Number(definition[key]))) entry[key] = Number(definition[key])
+      }
+      if (typeof definition.fileType === 'string') entry.fileType = definition.fileType.slice(0, 20)
+      return entry
+    })
+}
+
+async function listPictures(bridge, dir, depth = 0) {
+  if (depth > 3) return []
+  const entries = await entriesAt(bridge, dir)
+  if (!entries) return []
+  const images = []
+  const directories = []
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue
+    const path = entry.path || joinLocalPath(dir, entry.name)
+    if (entry.isDirectory) directories.push(path)
+    else if (IMAGE_EXTENSIONS.test(entry.name)) images.push(path)
+    if (images.length >= 200) break
+  }
+  for (const child of directories) {
+    if (images.length >= 200) break
+    images.push(...await listPictures(bridge, child, depth + 1))
+  }
+  return images
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+    .slice(0, 200)
+}
+
+async function readPictureSlides(bridge, dir, project) {
+  const preset = project?.preset && typeof project.preset === 'object' ? project.preset : null
+  if (!preset) return null
+  const mode = Number(preset.wallpapermode)
+  const custom = typeof preset.customdirectory === 'string' ? preset.customdirectory.trim() : ''
+  const single = typeof preset.image === 'string' ? preset.image.trim() : ''
+  let slides = []
+  if (custom && (mode === 1 || mode === 2)) {
+    const base = safeProjectPath(dir, custom)
+    if (base) slides = await listPictures(bridge, base)
+  } else if (single && IMAGE_EXTENSIONS.test(single)) {
+    const path = safeProjectPath(dir, single)
+    if (path && await existsAt(bridge, path)) slides = [path]
+  }
+  if (!slides.length) return null
+  const interval = Number(preset.imageswitchtimes)
+  return { slides, slideIntervalMs: SLIDE_SWITCH_MS[interval] || null }
+}
+
 async function readWallpaperProject(bridge, dir, source = 'manual', knownEntries = null) {
   const entries = knownEntries || await entriesAt(bridge, dir)
   if (!entries?.some(entry => entry.name.toLowerCase() === 'project.json')) return null
@@ -2461,22 +4260,28 @@ async function readWallpaperProject(bridge, dir, source = 'manual', knownEntries
   const canPlayVideo = kind === 'video' && mainExists && VIDEO_EXTENSIONS.test(mainPath)
   const canShowImage = kind === 'image' && mainExists && IMAGE_EXTENSIONS.test(mainPath)
   const canShowWeb = kind === 'web' && mainExists && /\.html?$/i.test(mainPath)
+  const picture = !canPlayVideo && !canShowWeb ? await readPictureSlides(bridge, dir, project) : null
   const mediaType = canPlayVideo ? 'video' : canShowWeb ? 'web' : 'image'
-  const mediaPath = canPlayVideo || canShowImage || canShowWeb ? mainPath : (previewExists ? previewPath : null)
+  const mediaPath = canPlayVideo || canShowImage || canShowWeb
+    ? mainPath : (picture?.slides?.[0] || (previewExists ? previewPath : null))
   if (!mediaPath) return null
   const title = typeof project.title === 'string' && project.title.trim()
     ? project.title.trim().slice(0, 120) : dir.split(/[\\/]/).at(-1)
   return {
     id: dir.toLowerCase(),
     title,
-    kind,
+    kind: picture ? 'image' : kind,
     source,
+    contentrating: typeof project.contentrating === 'string' ? project.contentrating : null,
     dir,
     mediaPath,
     mediaType,
+    slides: picture?.slides || (canShowImage ? [mainPath] : []),
+    slideIntervalMs: picture?.slideIntervalMs || null,
     previewPath: previewExists ? previewPath : mediaPath,
-    staticFallback: !canPlayVideo && !canShowImage && !canShowWeb,
-    workshopId: typeof project.workshopid === 'string' ? project.workshopid : null
+    staticFallback: !canPlayVideo && !canShowImage && !canShowWeb && !picture,
+    workshopId: typeof project.workshopid === 'string' ? project.workshopid : null,
+    properties: parseProjectProperties(project)
   }
 }
 
@@ -2549,2674 +4354,63 @@ async function scanWallpaperEngine(bridge, manualRoots = []) {
   return { items, libraries: [...libraries], error: null }
 }
 
-// ─── Explicitly MIT-marked WebGL player from dsh-skins ──────
-/**
- * @license MIT
- * Self-contained WebGL Scene Player runtime page for Wallpaper Engine scenes.
- * Renders 2D layered scenes, post-processing shaders (reflection, waterwaves,
- * foliagesway, tint), and GPU/CPU particle systems (shooting stars, fireflies).
- */
+/** Turn one scanned Wallpaper Engine item into the config patch the controller applies. */
+async function resolveWallpaperSelection(item, openScene) {
+  if (!item || typeof item !== 'object') throw new Error('Invalid wallpaper item')
+  let source = wallpaperMediaUrl(item.mediaPath, item.mediaType)
+  let type = item.mediaType
+  let framePath = null
+  let staticFallback = Boolean(item.staticFallback)
 
-const WE_SCENE_PLAYER_HTML = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>Wallpaper Engine Scene Player</title>
-<style>
-  html, body {
-    margin: 0;
-    padding: 0;
-    width: 100%;
-    height: 100%;
-    overflow: hidden;
-    background: transparent;
-  }
-  canvas {
-    display: block;
-    width: 100%;
-    height: 100%;
-    position: absolute;
-    inset: 0;
-  }
-</style>
-</head>
-<body>
-<canvas id="canvas"></canvas>
-<script>
-(function() {
-  'use strict';
-
-  const canvas = document.getElementById('canvas');
-  const contextOptions = { alpha: true, depth: true, antialias: false, premultipliedAlpha: false, powerPreference: 'low-power' };
-  const gl = canvas.getContext('webgl', contextOptions) || canvas.getContext('experimental-webgl', contextOptions);
-  if (!gl) return;
-  const uniformCache = new WeakMap(), attribCache = new WeakMap();
-  function cachedLocation(cache, program, name, lookup) {
-    let locations = cache.get(program);
-    if (!locations) { locations = new Map(); cache.set(program, locations); }
-    if (!locations.has(name)) locations.set(name, lookup.call(gl, resolveProgram(program), name));
-    return locations.get(name);
-  }
-  function uniformLocation(program, name) { return cachedLocation(uniformCache, program, name, gl.getUniformLocation); }
-  function attribLocation(program, name) { return cachedLocation(attribCache, program, name, gl.getAttribLocation); }
-
-
-  let sceneData = null;
-  let isPaused = false;
-  let contextLost = false;
-  let disposed = false;
-  let frameSerial = 0;
-  let fitMode = 'cover';
-  let startTime = performance.now();
-  let lastTime = performance.now();
-  let pausedAt = null;
-  let textureCache = new Map();
-  let textureBytes = 0;
-  const textureBudget = 128 * 1024 * 1024;
-  let videoTextureCache = new Map();
-  let activeParticles = [];
-  let mouseX = 0.5, mouseY = 0.5;
-  let curRotX = 0, curRotY = 0;
-  // Real cursor mirrored by the host: the backdrop iframe never receives
-  // input (pointer-events none), so the embedding page forwards normalized
-  // pointer positions via dsh-set-cursor. cursorActive clears when the
-  // pointer leaves the window; it gates the cursorHide fade and the xray
-  // reveal (parallax reuses mouseX/mouseY). Cursor-driven GPU water-ripple
-  // simulation was intentionally removed for resource efficiency.
-  let cursorX = 0.5, cursorY = 0.5, cursorActive = false;
-
-
-  window.addEventListener('mousemove', (e) => {
-    mouseX = e.clientX / window.innerWidth;
-    mouseY = e.clientY / window.innerHeight;
-    cursorX = mouseX;
-    cursorY = mouseY;
-    cursorActive = true;
-  });
-  window.addEventListener('mouseleave', () => { cursorActive = false; });
-
-  // 3D Shaders
-  const vs3D = \`
-    attribute vec3 a_pos;
-    attribute vec3 a_norm;
-    attribute vec2 a_uv;
-    attribute vec2 a_uv2;
-    uniform mat4 u_proj;
-    uniform mat4 u_view;
-    uniform mat4 u_model;
-    uniform mat3 u_normMat;
-    uniform float u_time;
-    uniform int u_isJet;
-    uniform int u_isAurora;
-    uniform int u_isThunder;
-    uniform int u_isBg;
-    uniform int u_isNeonSun;
-    varying vec3 v_norm;
-    varying vec3 v_worldPos;
-    varying vec2 v_uv;
-    varying vec2 v_uv2;
-    varying vec4 v_uv4;
-    varying float v_alpha;
-    void main() {
-      v_uv = a_uv;
-      v_uv2 = a_uv2;
-      v_uv4 = a_uv.xyxy;
-      v_alpha = 1.0;
-      vec3 pos = a_pos;
-      // WE ricepodjet shader: flame pulse along the jet cone.
-      if (u_isJet == 1) {
-        float outside = step(0.5, a_uv.x);
-        float pulseSpeed = 5.0 + outside * 10.0;
-        float pulseAmount = 1.0 - a_uv.y;
-        float pulseStrong = sin(u_time * pulseSpeed);
-        pos.xy *= mix(1.0, pulseStrong * 0.05 + 1.0, pulseAmount);
-        pos.z += pulseAmount * (cos(u_time * pulseSpeed) * 0.02 + 0.02);
-        v_alpha = pulseStrong * 0.25 + 0.75;
-      }
-      // WE ricepodorbitalaurora: swaying curtain with scrolled multi-sample UVs.
-      if (u_isAurora == 1) {
-        pos.x += sin(0.1 * u_time + a_uv.x * 5.0) * 0.05;
-        pos.y += sin(0.1 * u_time + a_uv.x * 3.0) * 0.02;
-        v_uv4.xy = a_uv;
-        v_uv4.x *= 5.7;
-        v_uv4.x += fract(u_time * 0.05);
-        v_uv4.zw = a_uv.xx;
-        v_uv4.z *= 0.5;
-        v_uv4.w *= 8.3;
-        v_uv4.z += fract(u_time * 0.04);
-        v_uv4.w -= fract(u_time * 0.03);
-        v_alpha = smoothstep(0.0, 0.1, a_uv.x) * smoothstep(1.0, 0.9, a_uv.x) * 0.6;
-      }
-      // WE ricepodorbitalthunder: sparkle cells with drifting sample offsets.
-      if (u_isThunder == 1) {
-        v_uv4.xy = a_uv * 0.777;
-        v_uv4.wz = a_uv * 0.3; // wz swizzle: w = x*0.3, z = y*0.3
-        v_uv4.z += sin((1.7 + u_time) * 0.1);
-        v_uv4.w += cos(u_time * 0.22);
-      }
-      // WE bg.vert: fullscreen background quad, position from UV directly.
-      if (u_isBg == 1) {
-        v_uv4 = vec4(a_uv + u_time * 0.03, a_uv.x * 2.0 - u_time * 0.0111, a_uv.y * 2.0 - u_time * 0.0111);
-        gl_Position = vec4(a_uv * 2.0 - 1.0, 0.5, 1.0);
-        return;
-      }
-      // WE neonsun.vert: procedural sun, uv remapped to a small disc space.
-      if (u_isNeonSun == 1) {
-        v_uv = (a_uv * 2.0 - 1.0) * 0.3;
-      }
-      vec4 worldPos = u_model * vec4(pos, 1.0);
-      v_worldPos = worldPos.xyz;
-      v_norm = normalize(u_normMat * a_norm);
-      gl_Position = u_proj * u_view * worldPos;
-    }
-  \`;
-
-  const fs3D = \`
-    precision mediump float;
-    varying vec3 v_norm;
-    varying vec3 v_worldPos;
-    varying vec2 v_uv;
-    varying vec2 v_uv2;
-    varying vec4 v_uv4;
-    varying float v_alpha;
-    uniform sampler2D u_tex;
-    uniform int u_hasTex;
-    uniform int u_isCarBody;
-    uniform int u_isGlass;
-    uniform int u_isDome;
-    uniform int u_isShadow;
-    uniform int u_isGrid;
-    uniform int u_isSkybox;
-    uniform int u_isSelfIllum;
-    uniform highp int u_isJet;
-    uniform highp int u_isAurora;
-    uniform highp int u_isThunder;
-    uniform highp int u_isBg;
-    uniform highp int u_isNeonSun;
-    uniform int u_gradFade;
-    uniform int u_sceneStd;
-    uniform vec3 u_jetPos[4];
-    uniform int u_jetCount;
-    uniform vec3 u_color;
-    uniform vec3 u_paintColor;
-    uniform vec3 u_stripeColor;
-    uniform vec3 u_ambientColor;
-    uniform vec3 u_cameraPos;
-    uniform vec3 u_lightDir;
-    uniform float u_specStrength;
-    uniform float u_specPower;
-    uniform highp float u_time;
-    uniform int u_hasTint;
-    uniform vec3 u_tint;
-    uniform vec3 u_tint2;
-    uniform sampler2D u_tex2;
-    uniform sampler2D u_lightmap;
-    uniform int u_hasLightmap;
-    uniform vec3 u_lightPos[4];
-    uniform vec4 u_lightColorRadius[4];
-    uniform int u_lightCount;
-    uniform vec3 u_skyLightColor;
-    uniform sampler2D u_reflTex;
-    uniform vec2 u_resolution;
-    uniform int u_hasReflTex;
-    void main() {
-      // Skybox: textured background sphere (no lighting)
-      if (u_isSkybox == 1) {
-        vec3 col = u_hasTex == 1 ? texture2D(u_tex, v_uv).rgb : u_ambientColor * 0.5;
-        gl_FragColor = vec4(col, 1.0);
-        return;
-      }
-      // Dome: gradient sphere background (car scenes)
-      if (u_isDome == 1) {
-        vec3 tint = u_ambientColor;
-        float h = normalize(v_worldPos).y * 0.5 + 0.5;
-        vec3 col = mix(tint * 0.35, tint, h);
-        gl_FragColor = vec4(col, 1.0);
-        return;
-      }
-      // Shadow: smooth radial gradient under car
-      if (u_isShadow == 1) {
-        float d = length(v_worldPos.xz);
-        float radial = 1.0 - smoothstep(0.0, 1.8, d);
-        float yFade = pow(clamp(1.0 - v_uv.y, 0.0, 1.0), 1.5);
-        float a = radial * yFade * 0.65;
-        gl_FragColor = vec4(0.0, 0.0, 0.0, a);
-        return;
-      }
-      // Grid floor: screen-space reflection from FBO
-      if (u_isGrid == 1) {
-        vec3 norm = normalize(v_norm);
-        vec3 lightDir = normalize(u_lightDir);
-        vec3 viewDir = normalize(u_cameraPos - v_worldPos);
-        // Base grid color
-        vec3 gridColor = u_ambientColor * 0.6;
-        // Screen-space reflection from the mirrored-camera FBO
-        vec3 reflColor = vec3(0.0);
-        if (u_hasReflTex == 1) {
-          vec2 screenUV = gl_FragCoord.xy / u_resolution;
-          reflColor = texture2D(u_reflTex, screenUV).rgb;
-        }
-        // Distance-based fade for reflection
-        float dist = length(v_worldPos.xz);
-        float fade = 1.0 - smoothstep(0.0, 3.5, dist);
-        // Fresnel for reflectivity at grazing angles
-        float fresnel = 1.0 - max(dot(norm, viewDir), 0.0);
-        fresnel = pow(fresnel, 2.0);
-        // Specular highlight
-        vec3 halfDir = normalize(lightDir + viewDir);
-        float gridSpec = pow(max(dot(norm, halfDir), 0.0), 100.0) * 0.2;
-        // Mix reflection with base color
-        float reflStrength = fade * 0.55 + fresnel * 0.3;
-        vec3 result = mix(gridColor, reflColor, reflStrength) + gridSpec;
-        float alpha = 0.9 * fade + 0.1;
-        gl_FragColor = vec4(result, alpha);
-        return;
-      }
-      // Self-illuminated: emissive glow (jet engines, taillights with selfillum combo)
-      if (u_isSelfIllum == 1) {
-        vec3 col = u_hasTex == 1 ? texture2D(u_tex, v_uv).rgb : u_color;
-        if (u_hasTint == 1) {
-          // WE tinted-glow shaders (technoglow): pow falloff, scheme-color
-          // tint, gentle pulse.
-          float pulse = sin(u_time) * 0.25 + 0.75;
-          col = col * col * u_tint * 3.0 * pulse;
-          gl_FragColor = vec4(col, u_hasTex == 1 ? texture2D(u_tex, v_uv).a : 1.0);
-        } else {
-          gl_FragColor = vec4(col * 1.5, 1.0);
-        }
-        return;
-      }
-      // WE neonsun fragment: procedural retrowave sun (gradient disc, scanline
-      // cutouts, glow halo). u_tint = colorsuntop, u_tint2 = colorsunbottom.
-      if (u_isNeonSun == 1) {
-        float sunSize = 0.05;
-        float sunSizeSqrt = sqrt(sunSize);
-        float blendSunColor = (v_uv.y + sunSize * 2.5) / sunSizeSqrt;
-        vec4 colorSun = vec4(mix(u_tint, u_tint2, blendSunColor), 0.0);
-        float sunRadius = dot(v_uv.xy, v_uv.xy);
-        colorSun.a = 1.0 - step(0.05, sunRadius);
-        float glowAlpha = pow(smoothstep(0.08, 0.045, sunRadius), 2.0);
-        float barPos = v_uv.y + 0.1;
-        float sunCutOut = 1.0 - clamp(smoothstep(0.0, 0.005, barPos) * smoothstep(1.0 - barPos * 9.0, 1.0 - barPos * 8.0, sin(barPos * 200.0 + u_time)), 0.0, 1.0);
-        float sunCutOutSmooth = 1.0 - clamp(smoothstep(0.0, 0.05, barPos) * smoothstep(-1.0 - barPos * 8.0, 1.0 - barPos * 8.0, sin(barPos * 200.0 + u_time)), 0.0, 1.0);
-        vec3 rgb = mix(u_tint2, colorSun.rgb, colorSun.a * sunCutOut);
-        float sunA = max(glowAlpha * sunCutOutSmooth, colorSun.a * sunCutOut);
-        gl_FragColor = vec4(rgb, sunA);
-        return;
-      }
-      // WE ricepodjet fragment: flame texture fades along uv.y with pulse alpha.
-      if (u_isJet == 1) {
-        vec3 col = u_hasTex == 1 ? texture2D(u_tex, v_uv).rgb : u_color;
-        col *= v_uv.y * v_alpha;
-        gl_FragColor = vec4(col, 1.0);
-        return;
-      }
-      // WE bg fragment: fullscreen tinted clouds + pattern background.
-      if (u_isBg == 1) {
-        float clouds = texture2D(u_tex, v_uv4.xy).a * texture2D(u_tex, v_uv4.zw).a * 1.4;
-        clouds = clouds * clouds;
-        float vignette = smoothstep(1.2, 0.0, length(v_uv - 0.5)) * 2.0;
-        float pattern = texture2D(u_tex2, v_uv * 50.0).a * 0.1;
-        pattern *= smoothstep(0.1, 0.7, length(v_uv - 0.5));
-        vec3 albedo = mix(u_tint, u_tint2, v_uv.y * v_uv.y) * (clouds + pattern) * vignette;
-        float bgAlpha = 1.0;
-        if (u_gradFade == 1) {
-          bgAlpha = smoothstep(0.2, 0.45, abs(v_uv.y - 0.5));
-        }
-        gl_FragColor = vec4(albedo, bgAlpha);
-        return;
-      }
-      // WE ricepodorbitalaurora fragment: layered scrolling aurora curtains.
-      if (u_isAurora == 1) {
-        vec3 color = texture2D(u_tex, v_uv4.xy).rgb;
-        vec3 color2 = texture2D(u_tex, v_uv4.wy).rgb;
-        vec3 blend = texture2D(u_tex, v_uv4.zy).rgb;
-        color = mix(color * color2, blend, blend.r);
-        gl_FragColor = vec4(color, v_alpha);
-        return;
-      }
-      // WE ricepodorbitalthunder fragment: sparkling blue cells.
-      if (u_isThunder == 1) {
-        float amt = texture2D(u_tex, v_uv4.xy).r;
-        amt *= texture2D(u_tex, v_uv4.zw).r;
-        vec3 color = mix(vec3(0.6, 0.5, 0.4), vec3(0.1, 0.3, 1.0), amt);
-        gl_FragColor = vec4(color, amt);
-        return;
-      }
-
-      vec4 baseColor = u_hasTex == 1 ? texture2D(u_tex, v_uv) : vec4(u_color, 1.0);
-      float alpha = 1.0;
-
-      // Car body paintwork: mix(paintColor, stripesColor, R) * G
-      if (u_isCarBody == 1 && u_hasTex == 1) {
-        vec3 bodyColor = mix(u_paintColor, u_stripeColor, baseColor.r) * baseColor.g;
-        baseColor = vec4(bodyColor, 1.0);
-      } else if (u_isGlass == 1) {
-        alpha = u_hasTex == 1 ? baseColor.a * 0.6 : 0.3;
-        baseColor.rgb = u_hasTex == 1 ? baseColor.rgb : vec3(0.15, 0.2, 0.28);
-      }
-
-      vec3 norm = normalize(v_norm);
-      vec3 lightDir = normalize(u_lightDir);
-      vec3 viewDir = normalize(u_cameraPos - v_worldPos);
-      vec3 halfDir = normalize(lightDir + viewDir);
-
-      if (u_sceneStd == 1) {
-        // Wallpaper Engine generic.frag: authored point lights, black-capable
-        // ambient/skylight, and the first light attenuated by the baked map.
-        vec3 lighting = u_ambientColor;
-        vec3 specularResult = vec3(0.0);
-        for (int li = 0; li < 4; li++) {
-          if (li < u_lightCount) {
-            vec3 delta = u_lightPos[li] - v_worldPos;
-            float distanceToLight = length(delta);
-            vec3 pointDir = delta / max(distanceToLight, 0.0001);
-            float attenuation = clamp((u_lightColorRadius[li].w - distanceToLight) / u_lightColorRadius[li].w, 0.0, 1.0);
-            vec3 pointColor = u_lightColorRadius[li].rgb;
-            float diffuse = max(dot(norm, pointDir), 0.0) * attenuation * attenuation;
-            vec3 diffuseLight = pointColor * diffuse;
-            if (li == 0 && u_hasLightmap == 1) {
-              diffuseLight *= texture2D(u_lightmap, v_uv2).rgb;
-            }
-            lighting += diffuseLight;
-            vec3 pointHalf = normalize(pointDir + viewDir);
-            specularResult += pointColor * pow(max(dot(norm, pointHalf), 0.0), u_specPower) * u_specStrength * attenuation;
-          }
-        }
-        lighting += max(dot(norm, vec3(0.0, -1.0, 0.0)), 0.0) * u_skyLightColor;
-        float boostAmt = 0.0;
-        for (int i = 0; i < 4; i++) {
-          if (i < u_jetCount) {
-            boostAmt += 1.0 - min(1.0, 2.0 * length(u_jetPos[i] - v_worldPos));
-          }
-        }
-        vec3 boost = vec3(3.0, 1.2, 0.2) * boostAmt;
-        gl_FragColor = vec4(baseColor.rgb * (lighting + boost) + specularResult, alpha);
-        return;
-      }
-
-      // Key light (squared falloff for car, linear for generic)
-      float NdotL = max(dot(norm, lightDir), 0.0);
-      float lighting = u_isCarBody == 1 ? NdotL * NdotL * 0.9 : NdotL * 1.1;
-
-      // Fill light from opposite side
-      vec3 fillDir = normalize(vec3(-lightDir.x, 0.3, -lightDir.z));
-      float fillNdotL = max(dot(norm, fillDir), 0.0);
-      lighting += fillNdotL * 0.25;
-
-      // Sky light from below for generic scenes
-      float skyLight = max(dot(norm, vec3(0.0, -1.0, 0.0)), 0.0);
-      lighting += skyLight * 0.15;
-
-      // Rim light
-      float rim = 1.0 - max(dot(norm, viewDir), 0.0);
-      rim = pow(rim, 3.0) * 0.3;
-
-      // Specular
-      float specBase = max(dot(halfDir, norm), 0.0);
-      float spec = pow(specBase, u_specPower);
-      if (u_isCarBody == 1) {
-        spec = spec * smoothstep(0.0, 0.1, sin(spec * 12.0));
-      }
-      float specular = spec * u_specStrength;
-
-      // Ricepod shader: specular += pow(specBase, 25 + 100 * smoothstep(0.3, 0.15, color.r)) * 2
-      // Generic scenes get extra specular for metallic look
-      if (u_isCarBody == 0 && u_isGlass == 0) {
-        float extraSpec = pow(specBase, 25.0 + 100.0 * smoothstep(0.3, 0.15, baseColor.r)) * 2.0;
-        specular += extraSpec * u_specStrength;
-      }
-
-      vec3 result = (u_ambientColor * 0.5 + lighting) * baseColor.rgb + specular + rim * u_ambientColor * 0.5;
-
-      gl_FragColor = vec4(result, alpha);
-    }
-  \`;
-
-  // Vertex shader for basic 2D quads
-  const vsBasic = \`
-    attribute vec2 a_pos;
-    attribute vec2 a_uv;
-    uniform mat4 u_proj;
-    uniform mat4 u_model;
-    uniform vec4 u_uvRect;
-    varying vec2 v_uv;
-    void main() {
-      v_uv = u_uvRect.xy + a_uv * (u_uvRect.zw - u_uvRect.xy);
-      gl_Position = u_proj * u_model * vec4(a_pos, 0.0, 1.0);
-    }
-  \`;
-
-  // Fragment shader for standard textures
-  const fsBasic = \`
-    precision mediump float;
-    varying vec2 v_uv;
-    uniform sampler2D u_tex;
-    uniform float u_alpha;
-    uniform vec3 u_tint;
-    uniform float u_bright;
-    uniform float u_power;
-    void main() {
-      vec4 col = texture2D(u_tex, v_uv);
-      col.rgb *= u_tint;
-      col.rgb *= u_bright;
-      col.rgb = pow(col.rgb, vec3(u_power));
-      col.a *= u_alpha;
-      gl_FragColor = col;
-    }
-  \`;
-
-  // Fragment shader for the WE xray effect (cursor reveal): the blend
-  // texture replaces the layer around the pointer with a soft radial
-  // falloff, gated by the blend alpha and the multiply constant. The
-  // author's sprite asset is approximated analytically; u_cursorOn freezes
-  // the reveal while the pointer is outside the window.
-  const fsXray = [
-    'precision mediump float;',
-    'varying vec2 v_uv;',
-    'uniform sampler2D u_tex;',
-    'uniform sampler2D u_blend;',
-    'uniform float u_alpha;',
-    'uniform vec2 u_cursorUV;',
-    'uniform vec2 u_xrayAspect;',
-    'uniform float u_pointerScale;',
-    'uniform float u_multiply;',
-    'uniform float u_cursorOn;',
-    'void main() {',
-    '  vec4 base = texture2D(u_tex, v_uv);',
-    '  vec4 blendTex = texture2D(u_blend, v_uv);',
-    '  float d = distance((v_uv - u_cursorUV) * u_xrayAspect, vec2(0.0));',
-    '  float r = d * u_pointerScale;',
-    '  float f = exp(-r * r * 3.0) * u_cursorOn;',
-    '  float blend = clamp(blendTex.a * u_multiply, 0.0, 1.0) * f;',
-    '  vec3 rgb = mix(base.rgb, blendTex.rgb, blend);',
-    '  float a = mix(base.a, blendTex.a, blend) * u_alpha;',
-    '  gl_FragColor = vec4(rgb, a);',
-    '}',
-  ].join('\\n');
-
-  // Fragment shader for WE shake effect (eye blinking, breathing)
-  const fsShake = [
-    'precision mediump float;',
-    'varying vec2 v_uv;',
-    'uniform sampler2D u_tex;',
-    'uniform sampler2D u_flow;',
-    'uniform sampler2D u_mask;',
-    'uniform int u_hasMask;',
-    'uniform float u_time;',
-    'uniform float u_speed;',
-    'uniform float u_strength;',
-    'uniform vec2 u_friction;',
-    'uniform vec2 u_bounds;',
-    'uniform int u_direction;',
-    'uniform float u_alpha;',
-    'uniform float u_bright;',
-    'uniform float u_power;',
-    'const float M_PI_2 = 6.283185307179586;',
-    'void main() {',
-    '  vec2 flowColors = texture2D(u_flow, v_uv).rg;',
-    '  vec2 flowMask = (flowColors.rg - vec2(0.498, 0.498)) * 2.0;',
-    '  float time = u_speed * u_time;',
-    '  float offset = sin(mod(time, M_PI_2));',
-    '  offset = offset * 0.498 + 0.5;',
-    '  float base = step(0.0, cos(time));',
-    '  offset = mix(1.0 - pow(max(0.0, 1.0 - offset), u_friction.x), pow(max(0.0, offset), u_friction.y), base);',
-    '  offset = clamp((offset - u_bounds.x) * (1.0 / max(0.0001, u_bounds.y - u_bounds.x)), 0.0, 1.0);',
-    '  if (u_direction == 0) {',
-    '    offset = offset * 2.0 - 1.0;',
-    '  } else if (u_direction == 2) {',
-    '    offset = offset - 1.0;',
-    '  }',
-    '  vec2 texCoordOffset = offset * u_strength * u_strength * flowMask;',
-    '  vec4 color = texture2D(u_tex, v_uv + texCoordOffset);',
-    '  if (u_hasMask > 0) {',
-    '    float maskVal = texture2D(u_mask, v_uv + texCoordOffset).r;',
-    '    vec4 orig = texture2D(u_tex, v_uv);',
-    '    color = mix(orig, color, maskVal);',
-    '  }',
-    '  color.rgb = pow(color.rgb * u_bright, vec3(u_power));',
-    '  color.a *= u_alpha;',
-    '  gl_FragColor = color;',
-    '}',
-  ].join('\\n');
-
-  // Fragment shader for water reflection
-  const fsReflection = \`
-    precision mediump float;
-    varying vec2 v_uv;
-    uniform sampler2D u_fbo;
-    uniform sampler2D u_mask;
-    uniform float u_time;
-    uniform float u_alpha;
-    // Scene-uv rect of the reflection quad: (leftU, topV, scaleU, scaleV);
-    // (0,0,1,1) for a fullscreen layer. Scene v grows downward (0 at the top).
-    uniform vec4 u_rect;
-    // Data-driven water surface from the scene object (legacy default 0.65).
-    uniform float u_waterLine;
-    // Reflection sample window: start + puddleDepth * span (legacy 0.42/0.38).
-    uniform vec2 u_reflectRange;
-
-    void main() {
-      float mask = texture2D(u_mask, v_uv).r;
-      vec2 sceneUv = u_rect.xy + v_uv * u_rect.zw;
-      if (mask < 0.05 || sceneUv.y < u_waterLine) {
-        discard;
-      }
-      float puddleDepth = (sceneUv.y - u_waterLine) / max(1.0 - u_waterLine, 0.0001);
-      vec2 uvReflect = vec2(sceneUv.x, u_reflectRange.x + puddleDepth * u_reflectRange.y);
-      // water wave ripple perturbation
-      float wave = sin(v_uv.y * 120.0 + u_time * 2.8) * 0.002 +
-                   cos(v_uv.x * 90.0 + u_time * 1.9) * 0.0015;
-      uvReflect.x += wave * mask;
-      uvReflect.y += wave * mask;
-
-      vec4 reflected = texture2D(u_fbo, clamp(uvReflect, 0.0, 1.0));
-      reflected.rgb *= vec3(0.70, 0.75, 0.90);
-      gl_FragColor = vec4(reflected.rgb, mask * u_alpha * 0.28);
-    }
-  \`;
-
-  // WE flag shader (TINT combo): rippling cloth via two scrolling normal
-  // samples, region colors remapped through texture channels.
-  const fsFlag = \`
-    precision mediump float;
-    varying vec2 v_uv;
-    uniform sampler2D u_tex;
-    uniform sampler2D u_normal;
-    uniform sampler2D u_cloth;
-    uniform float u_time;
-    uniform float u_speed;
-    uniform float u_strength;
-    uniform vec3 u_color1;
-    uniform vec3 u_color2;
-    uniform vec3 u_color3;
-    void main() {
-      vec2 nc1 = v_uv * vec2(1.0, 0.3) * 0.7;
-      nc1.x -= u_time * u_speed;
-      nc1.x -= ((0.5 - v_uv.x) * (1.0 - v_uv.y)) * 3.0;
-      nc1.x += 2.0 * pow(v_uv.y - 0.1, 3.0) * pow(v_uv.x, 2.0);
-      vec2 nc2 = v_uv * vec2(1.0, 0.7) * 0.3;
-      nc2.x -= u_time * u_speed * 0.5;
-      nc2.x -= ((1.0 - v_uv.x) * (1.0 - v_uv.y)) * 2.0;
-      vec3 normal = texture2D(u_normal, nc1).rgb * 2.0 - 1.0;
-      normal *= texture2D(u_normal, nc2).rgb * 2.0 - 1.0;
-      normal = mix(vec3(0.0, 0.0, 1.0), normal, u_strength);
-      normal = normalize(normal);
-      vec2 baseCoords = v_uv + normal.xy * 0.02;
-      vec3 albedo = texture2D(u_tex, baseCoords).rgb;
-      float cloth = texture2D(u_cloth, baseCoords * 4.0).r;
-      vec3 color = mix(u_color1, u_color2, albedo.r);
-      color = mix(color, u_color3, albedo.g);
-      color *= albedo.b * cloth;
-      color += cloth * 0.1;
-      float light = 0.2 + dot(vec3(0.707, 0.707, 0.0), normal) * 0.5 + 0.5;
-      light += pow(light, 5.0) * 0.5;
-      color *= light + light * clamp(cloth * 2.0 - 1.0, 0.0, 1.0);
-      gl_FragColor = vec4(color, 1.0);
-    }
-  \`;
-
-  // Fragment shader for particles
-  const fsParticle = \`
-    precision mediump float;
-    varying vec2 v_uv;
-    uniform sampler2D u_tex;
-    uniform vec4 u_color;
-    void main() {
-      vec4 tex = texture2D(u_tex, v_uv);
-      gl_FragColor = tex * u_color;
-    }
-  \`;
-
-  // WE flowimage shader: 3 content layers cross-faded while their UVs drift
-  // along the flow mask (deep_space nebula background).
-  const fsFlow = \`
-    precision mediump float;
-    varying vec2 v_uv;
-    uniform sampler2D u_mask;
-    uniform sampler2D u_l1;
-    uniform sampler2D u_l2;
-    uniform sampler2D u_l3;
-    uniform float u_time;
-    uniform vec3 u_speeds;
-    uniform float u_amp;
-    uniform float u_bright;
-    void main() {
-      vec3 flowColors = texture2D(u_mask, v_uv).rgb;
-      vec2 flowMask = (flowColors.rg - vec2(0.5, 0.5)) * 2.0;
-      float c0 = fract(u_time * u_speeds.x);
-      float c0b = fract(u_time * u_speeds.x + 0.5);
-      float c1 = fract(u_time * u_speeds.y);
-      float c1b = fract(u_time * u_speeds.y + 0.5);
-      float c2 = fract(u_time * u_speeds.z);
-      float c2b = fract(u_time * u_speeds.z + 0.5);
-      float b0 = 2.0 * abs(c0 - 0.5);
-      float b1 = 2.0 * abs(c1 - 0.5);
-      float b2 = 2.0 * abs(c2 - 0.5);
-      vec2 cuv = v_uv;
-      vec4 albedo = mix(texture2D(u_l1, cuv + flowMask * u_amp * 0.1 * c0),
-                        texture2D(u_l1, cuv + flowMask * u_amp * 0.1 * c0b), b0);
-      vec4 s1 = mix(texture2D(u_l2, cuv + flowMask * u_amp * 0.1 * c1),
-                    texture2D(u_l2, cuv + flowMask * u_amp * 0.1 * c1b), b1);
-      albedo.rgb = mix(albedo.rgb, s1.rgb, s1.a);
-      albedo.a = max(albedo.a, s1.a);
-      vec4 s2 = mix(texture2D(u_l3, cuv + flowMask * u_amp * 0.1 * c2),
-                    texture2D(u_l3, cuv + flowMask * u_amp * 0.1 * c2b), b2);
-      albedo.rgb = mix(albedo.rgb, s2.rgb, s2.a);
-      albedo.a = max(albedo.a, s2.a);
-      albedo.rgb *= u_bright;
-      gl_FragColor = albedo;
-    }
-  \`;
-
-  function createShader(type, src) {
-    const s = gl.createShader(type);
-    gl.shaderSource(s, src);
-    gl.compileShader(s);
-    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
-      console.error('we-scene-player shader compile failed:', gl.getShaderInfoLog(s));
-    }
-    return s;
+  if (item.kind === 'scene' || item.kind === 'web') {
+    if (typeof openScene !== 'function') throw new Error('Scene backend is unavailable')
+    const opened = await openScene({ dir: item.dir })
+    if (!opened?.ok) throw new Error(opened?.error || 'Scene backend refused this wallpaper')
+    source = item.dir
+    type = item.kind
+    framePath = item.kind === 'scene' ? (item.previewPath || null) : null
+    staticFallback = false
   }
 
-  const shaderCache = new Map();
-  function sharedShader(type, src) {
-    const key = type + ':' + src;
-    if (!shaderCache.has(key)) shaderCache.set(key, createShader(type, src));
-    return shaderCache.get(key);
-  }
-  // Many wallpapers use only one or two of the eleven shader programs.
-  // Compile only the programs actually requested by a draw/location lookup.
-  function createProgram(vsSrc, fsSrc) {
-    return { vsSrc, fsSrc, program: null };
-  }
-  function resolveProgram(record) {
-    if (record.program) return record.program;
-    const p = gl.createProgram();
-    gl.attachShader(p, sharedShader(gl.VERTEX_SHADER, record.vsSrc));
-    gl.attachShader(p, sharedShader(gl.FRAGMENT_SHADER, record.fsSrc));
-    gl.linkProgram(p);
-    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
-      console.error('we-scene-player program link failed:', gl.getProgramInfoLog(p));
-    }
-    record.program = p;
-    return p;
-  }
-  function useProgram(record) { gl.useProgram(resolveProgram(record)); }
-
-  const progBasic = createProgram(vsBasic, fsBasic);
-  const progReflection = createProgram(vsBasic, fsReflection);
-  const progParticle = createProgram(vsBasic, fsParticle);
-  const progFlow = createProgram(vsBasic, fsFlow);
-  const progFlag = createProgram(vsBasic, fsFlag);
-  const progXray = createProgram(vsBasic, fsXray);
-  const progShake = createProgram(vsBasic, fsShake);
-  const prog3D = createProgram(vs3D, fs3D);
-
-  // Camera-facing 3D billboard (sun sprites, 3D particle streaks). The quad is
-  // offset in view space along two CPU-computed axes so streaks can stretch
-  // along the velocity direction (WE spritetrail renderer).
-  const vsSprite = \`
-    attribute vec2 a_corner;
-    attribute vec2 a_uv;
-    uniform mat4 u_proj;
-    uniform mat4 u_view;
-    uniform vec3 u_center;
-    uniform vec2 u_axisX;
-    uniform vec2 u_axisY;
-    varying vec2 v_uv;
-    void main() {
-      v_uv = a_uv;
-      vec4 centerView = u_view * vec4(u_center, 1.0);
-      gl_Position = u_proj * vec4(centerView.xy + a_corner.x * u_axisX + a_corner.y * u_axisY, centerView.zw);
-    }
-  \`;
-  const fsSprite = \`
-    precision mediump float;
-    varying vec2 v_uv;
-    uniform sampler2D u_tex;
-    uniform int u_hasTex;
-    uniform vec4 u_color;
-    void main() {
-      vec4 t = u_hasTex == 1 ? texture2D(u_tex, v_uv) : vec4(1.0);
-      gl_FragColor = vec4(t.rgb * u_color.rgb, t.a * u_color.a);
-    }
-  \`;
-  const progSprite = createProgram(vsSprite, fsSprite);
-
-  // WE neongrid shader: procedural scrolling retrowave grid with fbm mountains.
-  // Needs OES_standard_derivatives for the screen-space normal.
-  const derivExt = gl.getExtension('OES_standard_derivatives');
-  const vsNeonGrid = \`
-    attribute vec3 a_pos;
-    attribute vec2 a_uv;
-    uniform mat4 u_proj;
-    uniform mat4 u_view;
-    uniform mat4 u_model;
-    uniform float u_time;
-    uniform float u_mountainScale;
-    varying vec4 v_tc;
-    varying vec4 v_vars;
-    varying vec3 v_pos;
-    float rand2(vec2 n) { return fract(sin(dot(n, vec2(12.9898, 4.1414))) * 43758.5453); }
-    float noise2(vec2 p) {
-      vec2 ip = floor(p);
-      vec2 u = fract(p);
-      u = u * u * (3.0 - 2.0 * u);
-      float res = mix(mix(rand2(ip), rand2(ip + vec2(1.0, 0.0)), u.x), mix(rand2(ip + vec2(0.0, 1.0)), rand2(ip + vec2(1.0, 1.0)), u.x), u.y);
-      return res * res;
-    }
-    float fbm(vec2 x) {
-      float v = 0.0;
-      float a = 0.5;
-      vec2 shift = vec2(100.0);
-      mat2 rot = mat2(cos(0.5), sin(0.5), -sin(0.5), cos(0.5));
-      for (int i = 0; i < 5; ++i) {
-        v += a * noise2(x);
-        x = x * rot * 2.0 + shift;
-        a *= 0.5;
-      }
-      return v;
-    }
-    void main() {
-      v_vars = vec4(0.0);
-      float speed = u_time * 2.0;
-      vec3 localPos = a_pos;
-      vec2 gridPos = floor(a_uv * 50.0 + vec2(0.0, speed));
-      float dampenDistance = abs(a_uv.x * 2.0 - 1.0);
-      float fallOffSides = pow(1.05 - dampenDistance, 0.5);
-      float fallOffCenter = (0.2 + 0.8 * pow(dampenDistance, 2.0));
-      float speedFrac = fract(speed) / 50.0;
-      v_vars.x = a_uv.y - speedFrac;
-      float dampenY = a_uv.y - speedFrac;
-      float clipCenter = clamp(0.8 - dampenDistance, 0.0, 1.0);
-      float offsetY = max(0.0, fbm(gridPos * 0.1) * 2.0 - clipCenter) * fallOffCenter * u_mountainScale;
-      float maskUVSmoothing = step(0.005, offsetY);
-      offsetY = offsetY * fallOffSides * dampenY + pow(dampenDistance, 2.0) * 0.02;
-      localPos.z -= speedFrac * 2.0;
-      localPos.y += offsetY;
-      vec4 worldPos = u_model * vec4(localPos, 1.0);
-      v_pos = worldPos.xyz;
-      gl_Position = u_proj * u_view * worldPos;
-      v_tc.xy = a_uv;
-      v_tc.zw = a_uv * 50.0;
-      float dampenUVSmoothing = clamp(abs(a_uv.x - 0.5) * 2.0 + maskUVSmoothing, 0.0, 1.0);
-      v_vars.yz = vec2(0.45) - v_tc.y * vec2(0.05, 0.75 - dampenUVSmoothing * 0.7);
-    }
-  \`;
-  const fsNeonGrid = (derivExt ? '#extension GL_OES_standard_derivatives : enable\\n' : '') + \`
-    precision mediump float;
-    varying vec4 v_tc;
-    varying vec4 v_vars;
-    varying vec3 v_pos;
-    uniform vec3 u_gridNear;
-    uniform vec3 u_gridFar;
-    uniform vec3 u_gridBg;
-    void main() {
-      vec3 n = vec3(0.0, 1.0, 0.0);
-      #ifdef GL_OES_standard_derivatives
-      vec3 dx = dFdx(v_pos);
-      vec3 dy = dFdy(v_pos);
-      n = normalize(cross(dy, dx));
-      #endif
-      vec3 lightDir = normalize(vec3(0.0, -0.15, -2.0) - v_pos);
-      vec2 grid = abs(fract(v_tc.zw) - 0.5);
-      vec2 gridBlend = smoothstep(v_vars.yz, vec2(0.5), grid);
-      float gridAlpha = gridBlend.x + gridBlend.y;
-      gridBlend = smoothstep(vec2(0.0), vec2(1.0), grid);
-      gridAlpha += (gridBlend.x + gridBlend.y) * clamp(0.3 - v_tc.y, 0.0, 1.0);
-      float alphaDistanceFade = smoothstep(1.0, 0.9, v_vars.x);
-      float colorDistanceBlend = pow(v_tc.y, 0.8);
-      float shadingNear = dot(vec3(0.0, 0.0, 1.0), n);
-      float shadingFar = dot(lightDir, n);
-      vec3 shadingColor = clamp(shadingNear, 0.0, 1.0) * u_gridNear * (1.0 - colorDistanceBlend)
-                        + clamp(shadingFar, 0.0, 1.0) * u_gridFar;
-      vec3 colorGrid = u_gridBg + shadingColor;
-      vec3 resultColor = mix(colorGrid, mix(u_gridNear, u_gridFar, colorDistanceBlend), gridAlpha * alphaDistanceFade);
-      gl_FragColor = vec4(resultColor, alphaDistanceFade);
-    }
-  \`;
-  const progNeonGrid = createProgram(vsNeonGrid, fsNeonGrid);
-
-  function drawNeonGrid(model, mesh, proj, view, elapsed) {
-    const uc = mesh.userColors || {};
-    const un = mesh.userNums || {};
-    useProgram(progNeonGrid);
-    gl.uniformMatrix4fv(uniformLocation(progNeonGrid, 'u_proj'), false, proj);
-    gl.uniformMatrix4fv(uniformLocation(progNeonGrid, 'u_view'), false, view);
-    gl.uniformMatrix4fv(uniformLocation(progNeonGrid, 'u_model'), false, mat4Transform3D(model.origin, model.angles, model.scale));
-    gl.uniform1f(uniformLocation(progNeonGrid, 'u_time'), elapsed);
-    gl.uniform1f(uniformLocation(progNeonGrid, 'u_mountainScale'), un.mountainscale != null ? un.mountainscale : 1);
-    const near = uc.gridnear || [1, 0, 0.2];
-    const far = uc.gridfar || [0, 0, 1];
-    const bgc = uc.gridbackground || [0.1, 0, 0.1];
-    gl.uniform3f(uniformLocation(progNeonGrid, 'u_gridNear'), near[0], near[1], near[2]);
-    gl.uniform3f(uniformLocation(progNeonGrid, 'u_gridFar'), far[0], far[1], far[2]);
-    gl.uniform3f(uniformLocation(progNeonGrid, 'u_gridBg'), bgc[0], bgc[1], bgc[2]);
-    const gpu = getGpuMesh(mesh);
-    const gPos = attribLocation(progNeonGrid, 'a_pos');
-    const gUv = attribLocation(progNeonGrid, 'a_uv');
-    gl.enableVertexAttribArray(gPos);
-    gl.enableVertexAttribArray(gUv);
-    gl.bindBuffer(gl.ARRAY_BUFFER, gpu.posBuf);
-    gl.vertexAttribPointer(gPos, 3, gl.FLOAT, false, 0, 0);
-    gl.bindBuffer(gl.ARRAY_BUFFER, gpu.uvBuf);
-    gl.vertexAttribPointer(gUv, 2, gl.FLOAT, false, 0, 0);
-    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gpu.idxBuf);
-    gl.drawElements(gl.TRIANGLES, gpu.iCount, gpu.idxType, 0);
-  }
-
-  // WE cloudsbg shader: fullscreen scrolling clouds + horizon glow.
-  const vsCloudsBg = \`
-    attribute vec2 a_corner;
-    attribute vec2 a_uv;
-    uniform float u_time;
-    uniform float u_aspect;
-    varying vec2 v_uv;
-    varying vec4 v_tcClouds;
-    void main() {
-      gl_Position = vec4(a_corner * 2.0, 0.0, 1.0);
-      v_uv = a_uv;
-      v_tcClouds.xy = (a_uv + u_time * 0.0007) * vec2(1.1, 1.1);
-      v_tcClouds.zw = (a_uv - u_time * 0.0011) * vec2(0.7, 0.7);
-      v_tcClouds.xz *= u_aspect;
-      v_tcClouds.zw = vec2(-v_tcClouds.w, v_tcClouds.z);
-    }
-  \`;
-  const fsCloudsBg = \`
-    precision mediump float;
-    varying vec2 v_uv;
-    varying vec4 v_tcClouds;
-    uniform sampler2D u_tex;
-    uniform int u_hasTex;
-    uniform vec3 u_color1;
-    uniform vec3 u_colorHorizon;
-    void main() {
-      float cloud0 = u_hasTex == 1 ? texture2D(u_tex, v_tcClouds.xy).r : 0.0;
-      float cloud1 = u_hasTex == 1 ? texture2D(u_tex, v_tcClouds.zw).r : 0.0;
-      float cloudBlend = cloud0 * cloud1;
-      vec3 albedo = u_color1 * cloudBlend;
-      albedo += (u_color1 * 0.5 + albedo) * pow(smoothstep(0.5, 0.0, v_uv.y), 2.0) * 2.0;
-      float horizonBend = 1.0 - cos(clamp(v_uv.x * 2.0 - 0.5, 0.0, 1.0) * 2.0 * 3.14159265);
-      vec2 horizonDelta = (v_uv - vec2(0.5, 0.6)) * vec2(0.5, 1.5 - horizonBend * 0.3);
-      albedo += u_colorHorizon * pow(smoothstep(0.5, 0.0, length(horizonDelta)), 2.0) * 2.0;
-      gl_FragColor = vec4(albedo, 1.0);
-    }
-  \`;
-  const progCloudsBg = createProgram(vsCloudsBg, fsCloudsBg);
-
-  function drawCloudsBgLayer(layer, elapsed, width, height) {
-    useProgram(progCloudsBg);
-    gl.bindBuffer(gl.ARRAY_BUFFER, spriteBuf);
-    const cPos = attribLocation(progCloudsBg, 'a_corner');
-    const cUv = attribLocation(progCloudsBg, 'a_uv');
-    gl.enableVertexAttribArray(cPos);
-    gl.enableVertexAttribArray(cUv);
-    gl.vertexAttribPointer(cPos, 2, gl.FLOAT, false, 16, 0);
-    gl.vertexAttribPointer(cUv, 2, gl.FLOAT, false, 16, 8);
-    gl.uniform1f(uniformLocation(progCloudsBg, 'u_time'), elapsed);
-    gl.uniform1f(uniformLocation(progCloudsBg, 'u_aspect'), width / Math.max(height, 1));
-    const uc = layer.userColors || {};
-    const c1 = uc.clouds || [0.05, 0.15, 0.4];
-    const ch = uc.horizon || [0.05, 0.15, 0.4];
-    gl.uniform3f(uniformLocation(progCloudsBg, 'u_color1'), c1[0], c1[1], c1[2]);
-    gl.uniform3f(uniformLocation(progCloudsBg, 'u_colorHorizon'), ch[0], ch[1], ch[2]);
-    if (layer.texUrl) {
-      const texRec = loadTexture(layer.texUrl, true);
-      if (texRec.loaded) {
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, texRec.texture);
-        gl.uniform1i(uniformLocation(progCloudsBg, 'u_tex'), 0);
-        gl.uniform1i(uniformLocation(progCloudsBg, 'u_hasTex'), 1);
-      } else {
-        gl.uniform1i(uniformLocation(progCloudsBg, 'u_hasTex'), 0);
-      }
-    } else {
-      gl.uniform1i(uniformLocation(progCloudsBg, 'u_hasTex'), 0);
-    }
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-  }
-  const spriteBuf = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, spriteBuf);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
-    -0.5, -0.5, 0.0, 0.0,
-     0.5, -0.5, 1.0, 0.0,
-    -0.5,  0.5, 0.0, 1.0,
-     0.5,  0.5, 1.0, 1.0,
-  ]), gl.STATIC_DRAW);
-
-  function drawBillboard(center, axisX, axisY, texUrl, color, proj, view) {
-    useProgram(progSprite);
-    gl.uniformMatrix4fv(uniformLocation(progSprite, 'u_proj'), false, proj);
-    gl.uniformMatrix4fv(uniformLocation(progSprite, 'u_view'), false, view);
-    gl.bindBuffer(gl.ARRAY_BUFFER, spriteBuf);
-    const cPos = attribLocation(progSprite, 'a_corner');
-    const cUv = attribLocation(progSprite, 'a_uv');
-    gl.enableVertexAttribArray(cPos);
-    gl.enableVertexAttribArray(cUv);
-    gl.vertexAttribPointer(cPos, 2, gl.FLOAT, false, 16, 0);
-    gl.vertexAttribPointer(cUv, 2, gl.FLOAT, false, 16, 8);
-    gl.uniform3f(uniformLocation(progSprite, 'u_center'), center[0], center[1], center[2]);
-    gl.uniform2f(uniformLocation(progSprite, 'u_axisX'), axisX[0], axisX[1]);
-    gl.uniform2f(uniformLocation(progSprite, 'u_axisY'), axisY[0], axisY[1]);
-    gl.uniform4f(uniformLocation(progSprite, 'u_color'), color[0], color[1], color[2], color[3]);
-    if (texUrl) {
-      const texRec = loadTexture(texUrl);
-      if (texRec.loaded) {
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, texRec.texture);
-        gl.uniform1i(uniformLocation(progSprite, 'u_tex'), 0);
-        gl.uniform1i(uniformLocation(progSprite, 'u_hasTex'), 1);
-      } else {
-        gl.uniform1i(uniformLocation(progSprite, 'u_hasTex'), 0);
-      }
-    } else {
-      gl.uniform1i(uniformLocation(progSprite, 'u_hasTex'), 0);
-    }
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-  }
-
-  // 3D particle system state, seeded from manifest.particles3d
-  const particles3dState = new Map();
-  function getParticles3d(sys) {
-    if (!particles3dState.has(sys)) particles3dState.set(sys, { list: [], acc: 0 });
-    return particles3dState.get(sys);
-  }
-  function updateParticles3d(sys, dt) {
-    const st = getParticles3d(sys);
-    const maxCount = Math.min(256, Math.max(0, Number(sys.maxCount) || 0));
-    const rate = Math.min(256, Math.max(0, Number(sys.rate) || 0));
-    // Do not accumulate missed spawns while full and release them in a burst.
-    st.acc = Math.min(maxCount, st.acc + rate * dt);
-    while (st.acc >= 1 && st.list.length < maxCount) {
-      st.acc -= 1;
-      // Random point on a sphere shell around the emitter origin.
-      const th = Math.random() * Math.PI * 2;
-      const ph = Math.acos(2 * Math.random() - 1);
-      const r = sys.distMin + Math.random() * (sys.distMax - sys.distMin);
-      const lerp = (a, b) => a + Math.random() * (b - a);
-      st.list.push({
-        x: sys.origin[0] + r * Math.sin(ph) * Math.cos(th),
-        y: sys.origin[1] + r * Math.sin(ph) * Math.sin(th),
-        z: sys.origin[2] + r * Math.cos(ph),
-        vx: lerp(sys.velMin[0], sys.velMax[0]),
-        vy: lerp(sys.velMin[1], sys.velMax[1]),
-        vz: lerp(sys.velMin[2], sys.velMax[2]),
-        size: lerp(sys.sizeMin, sys.sizeMax),
-        life: 0,
-        maxLife: lerp(sys.lifeMin, sys.lifeMax),
-        color: [lerp(sys.colorMin[0], sys.colorMax[0]), lerp(sys.colorMin[1], sys.colorMax[1]), lerp(sys.colorMin[2], sys.colorMax[2])],
-      });
-    }
-    st.acc = Math.min(st.acc, 4);
-    for (let i = st.list.length - 1; i >= 0; i--) {
-      const p = st.list[i];
-      p.life += dt;
-      if (p.life >= p.maxLife) { st.list.splice(i, 1); continue; }
-      p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
+  return {
+    wallpaperEnabled: true,
+    wallpaperType: type,
+    wallpaperSource: source,
+    weSelection: {
+      id: item.id,
+      title: item.title,
+      kind: item.kind,
+      source: item.source || '',
+      staticFallback,
+      dir: item.dir,
+      manifestPath: null,
+      framePath,
+      previewPath: item.previewPath || null,
+      slides: Array.isArray(item.slides) ? item.slides : [],
+      slideIntervalMs: Number.isFinite(Number(item.slideIntervalMs)) ? Number(item.slideIntervalMs) : null,
+      properties: Array.isArray(item.properties) ? item.properties : []
     }
   }
-
-  // Shared unit quad geometry (-0.5 to 0.5)
-  const quadBuf = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
-    -0.5, -0.5, 0.0, 1.0,
-     0.5, -0.5, 1.0, 1.0,
-    -0.5,  0.5, 0.0, 0.0,
-     0.5,  0.5, 1.0, 0.0,
-  ]), gl.STATIC_DRAW);
-
-  function loadTexture(url, repeat) {
-    const key = repeat ? url + '|repeat' : url;
-    if (textureCache.has(key)) return textureCache.get(key);
-    const tex = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, tex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0,0,0,0]));
-    const record = { texture: tex, loaded: false, width: 1, height: 1 };
-    textureCache.set(key, record);
-
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      if (disposed || contextLost) return;
-      // Bound decoded image residency as well as the canvas. A 4K multi-layer
-      // scene can otherwise allocate hundreds of MiB of GPU textures.
-      const maxSize = Math.min(Number(gl.getParameter(gl.MAX_TEXTURE_SIZE)) || 4096, 4096);
-      const scale = Math.min(1, maxSize / Math.max(img.width, img.height), Math.sqrt(4 * 1024 * 1024 / (img.width * img.height)));
-      const w = Math.max(1, Math.round(img.width * scale)), h = Math.max(1, Math.round(img.height * scale));
-      const bytes = w * h * 4;
-      if (textureBytes + bytes > textureBudget) { stopWithError(new Error('Scene image textures exceed 128 MiB')); return; }
-      let source = img;
-      if (scale < 1) {
-        source = document.createElement('canvas');
-        source.width = w; source.height = h;
-        source.getContext('2d').drawImage(img, 0, 0, w, h);
-      }
-      gl.bindTexture(gl.TEXTURE_2D, tex);
-      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-      const wrap = repeat ? gl.REPEAT : gl.CLAMP_TO_EDGE;
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, wrap);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, wrap);
-      record.loaded = true;
-      record.width = img.width;
-      record.height = img.height;
-      textureBytes += bytes;
-    };
-    img.src = url;
-    return record;
-  }
-
-  function activeTimePeriod(schedule, date) {
-    if (!schedule) return null;
-    const hour = date.getHours() + date.getMinutes() / 60;
-    if (hour >= schedule.morning && hour < schedule.day) return 'morning';
-    if (hour >= schedule.day && hour < schedule.dusk) return 'day';
-    if (hour >= schedule.dusk && hour < schedule.night) return 'dusk';
-    return 'night';
-  }
-
-  function layerEnabledByTime(layer, period) {
-    return !layer.timePeriod || layer.timePeriod === period || (layer.timePeriod === 'manual' && period === null);
-  }
-
-  function loadVideoTexture(layer, enabled) {
-    let record = videoTextureCache.get(layer.videoUrl);
-    if (!record) {
-      const texture = gl.createTexture();
-      gl.bindTexture(gl.TEXTURE_2D, texture);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0,0,0,0]));
-      const video = document.createElement('video');
-      // The player iframe is sandboxed without allow-same-origin, so every
-      // texture load is a cross-origin fetch from an opaque origin. Without
-      // CORS mode the video taints the WebGL texture and texImage2D throws a
-      // SecurityError, leaving the canvas blank (the scene-resource route
-      // answers Origin: null with access-control-allow-origin: null).
-      video.crossOrigin = 'anonymous';
-      video.src = layer.videoUrl;
-      video.loop = true;
-      video.muted = true;
-      video.playsInline = true;
-      video.preload = 'auto';
-      record = { texture, video, loaded: false, enabled: false };
-      video.addEventListener('loadeddata', () => { record.loaded = true; });
-      videoTextureCache.set(layer.videoUrl, record);
-      if (typeof video.requestVideoFrameCallback === 'function') {
-        record.decodedFrame = 0;
-        const onFrame = (now, metadata) => {
-          record.videoFrameId = null;
-          if (disposed || contextLost) return;
-          record.decodedFrame = metadata.presentedFrames;
-          record.videoFrameId = video.requestVideoFrameCallback(onFrame);
-        };
-        record.videoFrameId = video.requestVideoFrameCallback(onFrame);
-      }
-    }
-    if (record.enabled !== enabled) {
-      record.enabled = enabled;
-      if (enabled && !isPaused) { void record.video.play().catch(() => {}); }
-      else record.video.pause();
-    }
-    // Shared video layers/passes upload each decoded frame only once.
-    const decodedFrame = record.decodedFrame ?? record.video.currentTime;
-    if (enabled && record.loaded && record.video.readyState >= 2 && record.uploadFrame !== frameSerial && record.uploadTime !== decodedFrame) {
-      gl.bindTexture(gl.TEXTURE_2D, record.texture);
-      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
-      const width = record.video.videoWidth, height = record.video.videoHeight;
-      if (!record.bytes || record.width !== width || record.height !== height) {
-        const bytes = (width || 1) * (height || 1) * 4;
-        if (textureBytes - (record.bytes || 0) + bytes > textureBudget) throw new Error('Scene textures exceed 128 MiB');
-        textureBytes += bytes - (record.bytes || 0);
-        record.bytes = bytes;
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, record.video);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-        record.width = width; record.height = height;
-      } else {
-        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, record.video);
-      }
-      record.uploadTime = decodedFrame;
-      record.uploadFrame = frameSerial;
-    }
-    return record;
-  }
-
-  // FBO setup for reflection passes
-  let fbo = null, fboTex = null, fboWidth = 0, fboHeight = 0;
-  function ensureFbo(w, h) {
-    if (fbo && fboWidth === w && fboHeight === h) return;
-    fboWidth = w; fboHeight = h;
-    if (fbo) gl.deleteFramebuffer(fbo);
-    if (fboTex) gl.deleteTexture(fboTex);
-    fbo = gl.createFramebuffer();
-    fboTex = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, fboTex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
-    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, fboTex, 0);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-  }
-
-  function mat4Ortho(left, right, bottom, top, near, far) {
-    const lr = 1 / (left - right);
-    const bt = 1 / (bottom - top);
-    const nf = 1 / (near - far);
-    return new Float32Array([
-      -2 * lr, 0, 0, 0,
-      0, -2 * bt, 0, 0,
-      0, 0, 2 * nf, 0,
-      (left + right) * lr, (top + bottom) * bt, (far + near) * nf, 1
-    ]);
-  }
-
-  function mat4Perspective(fovRad, aspect, near, far) {
-    const f = 1.0 / Math.tan(fovRad / 2);
-    const nf = 1.0 / (near - far);
-    return new Float32Array([
-      f / aspect, 0, 0, 0,
-      0, f, 0, 0,
-      0, 0, (far + near) * nf, -1,
-      0, 0, 2 * far * near * nf, 0
-    ]);
-  }
-
-  function mat4LookAt(eye, center, up) {
-    let zx = eye[0] - center[0], zy = eye[1] - center[1], zz = eye[2] - center[2];
-    let len = Math.hypot(zx, zy, zz) || 1;
-    zx /= len; zy /= len; zz /= len;
-
-    let xx = up[1] * zz - up[2] * zy, xy = up[2] * zx - up[0] * zz, xz = up[0] * zy - up[1] * zx;
-    len = Math.hypot(xx, xy, xz) || 1;
-    xx /= len; xy /= len; xz /= len;
-
-    let yx = zy * xz - zz * xy, yy = zz * xx - zx * xz, yz = zx * xy - zy * xx;
-
-    return new Float32Array([
-      xx, yx, zx, 0,
-      xy, yy, zy, 0,
-      xz, yz, zz, 0,
-      -(xx * eye[0] + xy * eye[1] + xz * eye[2]),
-      -(yx * eye[0] + yy * eye[1] + yz * eye[2]),
-      -(zx * eye[0] + zy * eye[1] + zz * eye[2]),
-      1
-    ]);
-  }
-
-  function mat4Transform3D(origin, angles, scale) {
-    const ox = origin[0] || 0, oy = origin[1] || 0, oz = origin[2] || 0;
-    const sx = scale[0] || 1, sy = scale[1] || 1, sz = scale[2] || 1;
-    const ax = (angles[0] || 0) * Math.PI / 180;
-    const ay = (angles[1] || 0) * Math.PI / 180;
-    const az = (angles[2] || 0) * Math.PI / 180;
-
-    const cx = Math.cos(ax), sxn = Math.sin(ax);
-    const cy = Math.cos(ay), syn = Math.sin(ay);
-    const cz = Math.cos(az), szn = Math.sin(az);
-
-    const m00 = (cy * cz) * sx;
-    const m01 = (cx * szn + sxn * syn * cz) * sx;
-    const m02 = (sxn * szn - cx * syn * cz) * sx;
-
-    const m10 = (-cy * szn) * sy;
-    const m11 = (cx * cz - sxn * syn * szn) * sy;
-    const m12 = (sxn * cz + cx * syn * szn) * sy;
-
-    const m20 = syn * sz;
-    const m21 = (-sxn * cy) * sz;
-    const m22 = (cx * cy) * sz;
-
-    return new Float32Array([
-      m00, m01, m02, 0,
-      m10, m11, m12, 0,
-      m20, m21, m22, 0,
-      ox,  oy,  oz,  1
-    ]);
-  }
-
-  function mat3NormalMatrix(m4) {
-    return new Float32Array([
-      m4[0], m4[1], m4[2],
-      m4[4], m4[5], m4[6],
-      m4[8], m4[9], m4[10]
-    ]);
-  }
-
-  const modelGpuCache = new Map();
-  function getGpuMesh(mesh) {
-    if (modelGpuCache.has(mesh)) return modelGpuCache.get(mesh);
-
-    function b64ToF32(b64) {
-      const bin = atob(b64);
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      return new Float32Array(bytes.buffer);
-    }
-    function b64ToU16(b64) {
-      const bin = atob(b64);
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      return new Uint16Array(bytes.buffer);
-    }
-    function b64ToU32(b64) {
-      const bin = atob(b64);
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      return new Uint32Array(bytes.buffer);
-    }
-    // Meshes above 65535 vertices carry u32 indices (mesh.idx32), which
-    // WebGL1 only exposes via OES_element_index_uint.
-    const uintIndexExt = gl.getExtension('OES_element_index_uint');
-
-    const posBuf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, b64ToF32(mesh.posB64), gl.STATIC_DRAW);
-
-    const normBuf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, normBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, b64ToF32(mesh.normB64), gl.STATIC_DRAW);
-
-    const uvBuf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, uvBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, b64ToF32(mesh.uvB64), gl.STATIC_DRAW);
-
-    const uv2Buf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, uv2Buf);
-    gl.bufferData(gl.ARRAY_BUFFER, b64ToF32(mesh.uv2B64 || mesh.uvB64), gl.STATIC_DRAW);
-
-    const idxBuf = gl.createBuffer();
-    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuf);
-    const idx32 = Boolean(mesh.idx32) && uintIndexExt;
-    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx32 ? b64ToU32(mesh.indicesB64) : b64ToU16(mesh.indicesB64), gl.STATIC_DRAW);
-
-    const gpu = { posBuf, normBuf, uvBuf, uv2Buf, idxBuf, iCount: mesh.iCount, idxType: idx32 ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT };
-    modelGpuCache.set(mesh, gpu);
-    return gpu;
-  }
-
-  function mat4Transform2D(x, y, w, h, angleRad) {
-    const c = Math.cos(angleRad || 0);
-    const s = Math.sin(angleRad || 0);
-    return new Float32Array([
-      w * c,  w * s,  0, 0,
-     -h * s,  h * c,  0, 0,
-      0,      0,      1, 0,
-      x,      y,      0, 1
-    ]);
-  }
-
-  function spawnParticle(emitter, system) {
-    const lifeMin = system.lifeMin || 3;
-    const lifeMax = system.lifeMax || 5;
-    const lifetime = lifeMin + Math.random() * (lifeMax - lifeMin);
-
-    // Position
-    let x = 0, y = 0, vx = 0, vy = 0;
-    if (system.type === 'meteor') {
-      x = 500 + Math.random() * 3000;
-      y = 1200 + Math.random() * 800;
-      const speed = 700 + Math.random() * 500;
-      vx = -speed * 0.85;
-      vy = -speed * 0.52;
-    } else { // fireflies / sparkles
-      x = 200 + Math.random() * 3440;
-      y = 100 + Math.random() * 900;
-      vx = (Math.random() - 0.5) * 25;
-      vy = 10 + Math.random() * 20;
-    }
-
-    const size = system.size || (15 + Math.random() * 20);
-    activeParticles.push({
-      system,
-      x, y, vx, vy,
-      size,
-      life: 0,
-      maxLife: lifetime,
-      color: system.color || [1, 1, 0.8, 1],
-      trail: []
-    });
-  }
-
-  function updateParticles(dt) {
-    for (let i = activeParticles.length - 1; i >= 0; i--) {
-      const p = activeParticles[i];
-      p.life += dt;
-      if (p.life >= p.maxLife) {
-        activeParticles.splice(i, 1);
-        continue;
-      }
-      p.x += p.vx * dt;
-      p.y += p.vy * dt;
-      if (p.system.type === 'meteor') {
-        p.trail.push({ x: p.x, y: p.y, life: p.life });
-        if (p.trail.length > 8) p.trail.shift();
-      } else {
-        // Floating wander
-        p.vx += (Math.random() - 0.5) * 15 * dt;
-        p.vy += (Math.random() - 0.5) * 15 * dt;
-      }
-    }
-  }
-  // FBO for screen-space reflection (grid floor)
-  let reflFbo = null;
-  let reflTex = null;
-  let reflDepth = null;
-  let reflW = 0, reflH = 0;
-  function ensureReflFbo(w, h) {
-    if (reflW === w && reflH === h && reflFbo) return;
-    if (reflFbo) { gl.deleteFramebuffer(reflFbo); gl.deleteTexture(reflTex); gl.deleteRenderbuffer(reflDepth); }
-    reflFbo = gl.createFramebuffer();
-    reflTex = gl.createTexture();
-    reflDepth = gl.createRenderbuffer();
-    gl.bindTexture(gl.TEXTURE_2D, reflTex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.bindRenderbuffer(gl.RENDERBUFFER, reflDepth);
-    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, w, h);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, reflFbo);
-    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, reflTex, 0);
-    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, reflDepth);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    reflW = w; reflH = h;
-  }
-
-  // Draws exactly one frame. The loop itself is owned by render(): an early
-  // version scheduled the next frame here AND in render(), which doubled the
-  // rAF chain every frame (2^n callbacks) and saturated the GPU.
-  function renderFrame(now) {
-    if (!sceneData) return;
-    frameSerial += 1;
-
-    const dt = Math.min((now - lastTime) / 1000, 0.1);
-    lastTime = now;
-    const elapsed = (now - startTime) / 1000;
-
-    if (!isPaused) {
-      // Spawn particles periodically
-      if (sceneData.hasMeteors && Math.random() < dt * 1.8) {
-        spawnParticle({}, { type: 'meteor', lifeMin: 1.2, lifeMax: 2.2, size: 28, color: [1, 0.95, 0.85, 1], texUrl: sceneData.meteorTex });
-      }
-      if (sceneData.hasFireflies && activeParticles.filter(p => p.system.type === 'firefly').length < 35) {
-        spawnParticle({}, { type: 'firefly', lifeMin: 4, lifeMax: 8, size: 14, color: [0.8, 1.0, 0.5, 0.85], texUrl: sceneData.sparkleTex });
-      }
-      updateParticles(dt);
-    }
-
-    // Size the backing store in device pixels: on HiDPI displays a CSS-pixel
-    // canvas is upscaled by the compositor and the wallpaper looks soft
-    // (capped at 2x to bound GPU cost on very high DPR screens).
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    let width = Math.max(1, Math.round(window.innerWidth * dpr));
-    let height = Math.max(1, Math.round(window.innerHeight * dpr));
-    const maxDim = 2560;
-    if (width > maxDim || height > maxDim) {
-      const s = maxDim / Math.max(width, height);
-      width = Math.max(1, Math.round(width * s));
-      height = Math.max(1, Math.round(height * s));
-    }
-    if (canvas.width !== width || canvas.height !== height) {
-      canvas.width = width;
-      canvas.height = height;
-    }
-
-    // Some WE scenes mark the project as 3D solely because they contain 3D
-    // particle systems while their visual base is still ordinary image layers.
-    // Route those mixed scenes through the 2D compositor and draw the decoded
-    // artwork; the 3D-only branch otherwise clears an opaque canvas and shows
-    // only particles over a gradient.
-    if (sceneData.is3D && sceneData.models && sceneData.models.length > 0) {
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-      gl.viewport(0, 0, width, height);
-      const bg = sceneData.clearColor || [0.1, 0.1, 0.15];
-      gl.clearColor(bg[0] * 0.4, bg[1] * 0.4, bg[2] * 0.4, 1.0);
-      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-      gl.enable(gl.DEPTH_TEST);
-      gl.disable(gl.CULL_FACE);
-
-      const isCarScene = Boolean(sceneData.carBodyColor);
-      const aspect = width / height;
-      const cam = sceneData.camera || { eye: [2.18, 1.98, 4.63], center: [0, 0.45, 0], up: [0, 1, 0], fov: 50 };
-      const proj3D = mat4Perspective((cam.fov || 50) * Math.PI / 180, aspect, 0.1, 1000.0);
-
-      // Camera animation: use scene-specific paths if available, otherwise slow orbit
-      const camPaths = sceneData.cameraPaths;
-      let eye, center, upVec;
-      if (camPaths && camPaths.length > 0) {
-        const totalDur = camPaths.reduce((s, p) => s + p.d, 0);
-        const cycleTime = elapsed % totalDur;
-        let accum = 0, seg = camPaths[0], segT = 0;
-        for (const p of camPaths) {
-          if (cycleTime < accum + p.d) { seg = p; segT = (cycleTime - accum) / p.d; break; }
-          accum += p.d;
-        }
-        segT = segT * segT * (3 - 2 * segT);
-        const lerp3 = (a, b, t) => [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t];
-        eye = lerp3(seg.e0, seg.e1, segT);
-        center = lerp3(seg.c0, seg.c1, segT);
-        upVec = lerp3(seg.u0, seg.u1, segT);
-      } else if (sceneData.cameraStatic) {
-        // Fixed scene camera (no animation paths)
-        eye = [cam.eye[0], cam.eye[1], cam.eye[2]];
-        center = [cam.center[0], cam.center[1], cam.center[2]];
-        upVec = [cam.up[0], cam.up[1], cam.up[2]];
-      } else {
-        const cx = cam.center[0], cy = cam.center[1], cz = cam.center[2];
-        const dx = cam.eye[0] - cx, dy = cam.eye[1] - cy, dz = cam.eye[2] - cz;
-        const radius = Math.hypot(dx, dy, dz) || 4.5;
-        const baseAngle = Math.atan2(dx, dz);
-        const pitchAngle = Math.atan2(dy, Math.hypot(dx, dz));
-        const yaw = baseAngle + elapsed * 0.05;
-        const pitch = pitchAngle;
-        eye = [cx + Math.sin(yaw) * Math.cos(pitch) * radius, cy + Math.sin(pitch) * radius, cz + Math.cos(yaw) * Math.cos(pitch) * radius];
-        center = [cx, cy, cz];
-        upVec = [0, 1, 0];
-      }
-      // Mouse parallax
-      const targetYaw = (mouseX - 0.5) * 0.6;
-      const targetPitch = (mouseY - 0.5) * 0.3;
-      curRotY += (targetYaw - curRotY) * 0.04;
-      curRotX += (targetPitch - curRotX) * 0.04;
-      eye[0] += curRotY * 0.5;
-      eye[1] += curRotX * 0.3;
-
-      const view3D = mat4LookAt(eye, center, upVec);
-      // Planar reflection: the FBO pass renders from a camera mirrored below
-      // the floor plane (y=0), so the grid can sample it 1:1 by screen UV.
-      const view3DRefl = mat4LookAt(
-        [eye[0], -eye[1], eye[2]],
-        [center[0], -center[1], center[2]],
-        [upVec[0], -upVec[1], upVec[2]]);
-      const bodyCol = sceneData.carBodyColor || [1, 0, 0];
-
-      // (Re-)bind prog3D with all scene uniforms. Must be re-invoked after any
-      // pass that switches to another program (bgLayers, billboards).
-      function bindProg3D(viewOverride) {
-        useProgram(prog3D);
-        gl.uniformMatrix4fv(uniformLocation(prog3D, 'u_proj'), false, proj3D);
-        gl.uniformMatrix4fv(uniformLocation(prog3D, 'u_view'), false, viewOverride || view3D);
-        gl.uniform3f(uniformLocation(prog3D, 'u_cameraPos'), eye[0], eye[1], eye[2]);
-        gl.uniform1f(uniformLocation(prog3D, 'u_time'), elapsed);
-        // WE-standard scene shading for generic scenes; car scenes keep their
-        // dedicated paint/grid pipeline.
-        gl.uniform1i(uniformLocation(prog3D, 'u_sceneStd'), isCarScene ? 0 : 1);
-        // Engine-glow boost positions: origins of jet models (ricepod.vert).
-        const jetPos = [];
-        for (const model of sceneData.models) {
-          const mName = (model.name || '').toLowerCase();
-          const jetLike = mName.includes('jet') || (model.meshes || []).some((mm) => (mm.shader || '').toLowerCase().includes('jet'));
-          if (jetLike && jetPos.length < 4) jetPos.push(model.origin || [0, 0, 0]);
-        }
-        gl.uniform1i(uniformLocation(prog3D, 'u_jetCount'), jetPos.length);
-        for (let ji = 0; ji < 4; ji++) {
-          const jp = jetPos[ji] || [0, 0, 0];
-          gl.uniform3f(uniformLocation(prog3D, 'u_jetPos[' + ji + ']'), jp[0], jp[1], jp[2]);
-        }
-        const pointLights = sceneData.pointLights || [];
-        gl.uniform1i(uniformLocation(prog3D, 'u_lightCount'), pointLights.length);
-        for (let li = 0; li < 4; li++) {
-          const light = pointLights[li] || { origin: [0, 0, 0], color: [0, 0, 0], radius: 1 };
-          gl.uniform3f(uniformLocation(prog3D, 'u_lightPos[' + li + ']'), light.origin[0], light.origin[1], light.origin[2]);
-          gl.uniform4f(uniformLocation(prog3D, 'u_lightColorRadius[' + li + ']'), light.color[0], light.color[1], light.color[2], light.radius);
-        }
-        const sky = sceneData.skyLightColor || [0, 0, 0];
-        gl.uniform3f(uniformLocation(prog3D, 'u_skyLightColor'), sky[0], sky[1], sky[2]);
-        // Ricepod uses lightDir (-0.577, 0.577, 0.577), car uses (0.577, 0.577, 0.577)
-        gl.uniform3f(uniformLocation(prog3D, 'u_lightDir'), isCarScene ? 0.577 : -0.577, 0.577, 0.577);
-        const amb = sceneData.clearColor || [0.1, 0.1, 0.15];
-        // Generic scenes must preserve authored black ambient. Artificially
-        // lifting it illuminated distant geometry that WE intentionally hides.
-        const ambColor = isCarScene ? amb : (sceneData.ambientColor || [0, 0, 0]);
-        gl.uniform3f(uniformLocation(prog3D, 'u_ambientColor'), ambColor[0], ambColor[1], ambColor[2]);
-        gl.uniform3f(uniformLocation(prog3D, 'u_paintColor'), bodyCol[0], bodyCol[1], bodyCol[2]);
-      }
-      bindProg3D();
-
-      const locPos = attribLocation(prog3D, 'a_pos');
-      const locNorm = attribLocation(prog3D, 'a_norm');
-      const locUv = attribLocation(prog3D, 'a_uv');
-      const locUv2 = attribLocation(prog3D, 'a_uv2');
-      gl.enableVertexAttribArray(locPos);
-      gl.enableVertexAttribArray(locNorm);
-      gl.enableVertexAttribArray(locUv);
-      gl.enableVertexAttribArray(locUv2);
-
-      // Per-submesh specular params (from WE material JSONs)
-      const specMap = {
-        body: [0.4, 6], glass: [5, 50], interior: [0.2, 15],
-        matte: [0.5, 10], taillights: [0.25, 10], wheel: [1, 10],
-      };
-      function getSpecParams(texUrl) {
-        if (!texUrl) return [0.3, 10];
-        for (const [k, v] of Object.entries(specMap)) {
-          if (texUrl.includes(k)) return v;
-        }
-        return [0.3, 10];
-      }
-
-      // Render in correct order: skybox/dome, opaque, shadow, grid, glass/additive
-      const skyboxModels = [];
-      const domeModels = [];
-      const opaqueModels = [];
-      const shadowModels = [];
-      const gridModels = [];
-      const glassQueue = [];
-      const additiveQueue = [];
-      const translucentQueue = [];
-      const neonGridQueue = [];
-
-      for (const model of sceneData.models) {
-        const mName = (model.name || '').toLowerCase();
-        if (mName === 'skybox') { skyboxModels.push(model); continue; }
-        if (mName === 'dome') { domeModels.push(model); continue; }
-        if (mName === 'shadow') { shadowModels.push(model); continue; }
-        if (mName === 'grid') { gridModels.push(model); continue; }
-        // Material blending flags decide the queue per mesh; the model name
-        // 'jet' heuristic stays as a fallback for legacy manifests.
-        const opaqueMeshes = [];
-        for (const mesh of model.meshes) {
-          const shName = (mesh.shader || '').toLowerCase();
-          if (shName === 'neongrid') neonGridQueue.push({ model, mesh });
-          else if (mesh.additive || mName.includes('jet')) additiveQueue.push({ model, mesh });
-          else if (mesh.translucent) translucentQueue.push({ model, mesh });
-          else opaqueMeshes.push(mesh);
-        }
-        if (opaqueMeshes.length > 0) opaqueModels.push({ ...model, meshes: opaqueMeshes });
-      }
-
-      // Helper to draw a mesh with given uniforms
-      function drawMesh(model, mesh, flags) {
-        let modelMat = mat4Transform3D(model.origin, model.angles, model.scale);
-        // Skybox/aurora/thunder follow the camera position (WE shaders add
-        // g_EyePosition to the vertex instead of a model transform).
-        if (flags.skybox || flags.followEye) {
-          modelMat = mat4Transform3D([eye[0], eye[1], eye[2]], model.angles, model.scale);
-        }
-        gl.uniformMatrix4fv(uniformLocation(prog3D, 'u_model'), false, modelMat);
-        const normMat = mat3NormalMatrix(modelMat);
-        gl.uniformMatrix3fv(uniformLocation(prog3D, 'u_normMat'), false, normMat);
-
-        const gpu = getGpuMesh(mesh);
-        gl.bindBuffer(gl.ARRAY_BUFFER, gpu.posBuf);
-        gl.vertexAttribPointer(locPos, 3, gl.FLOAT, false, 0, 0);
-        gl.bindBuffer(gl.ARRAY_BUFFER, gpu.normBuf);
-        gl.vertexAttribPointer(locNorm, 3, gl.FLOAT, false, 0, 0);
-        gl.bindBuffer(gl.ARRAY_BUFFER, gpu.uvBuf);
-        gl.vertexAttribPointer(locUv, 2, gl.FLOAT, false, 0, 0);
-        gl.bindBuffer(gl.ARRAY_BUFFER, gpu.uv2Buf);
-        gl.vertexAttribPointer(locUv2, 2, gl.FLOAT, false, 0, 0);
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gpu.idxBuf);
-
-        gl.uniform1i(uniformLocation(prog3D, 'u_isDome'), flags.dome ? 1 : 0);
-        gl.uniform1i(uniformLocation(prog3D, 'u_isShadow'), flags.shadow ? 1 : 0);
-        gl.uniform1i(uniformLocation(prog3D, 'u_isGrid'), flags.grid ? 1 : 0);
-        gl.uniform1i(uniformLocation(prog3D, 'u_isSkybox'), flags.skybox ? 1 : 0);
-        gl.uniform1i(uniformLocation(prog3D, 'u_isSelfIllum'), flags.selfIllum ? 1 : 0);
-        gl.uniform1i(uniformLocation(prog3D, 'u_isCarBody'), flags.body ? 1 : 0);
-        gl.uniform1i(uniformLocation(prog3D, 'u_isGlass'), flags.glass ? 1 : 0);
-        gl.uniform1i(uniformLocation(prog3D, 'u_isJet'), flags.jet ? 1 : 0);
-        gl.uniform1i(uniformLocation(prog3D, 'u_isAurora'), flags.aurora ? 1 : 0);
-        gl.uniform1i(uniformLocation(prog3D, 'u_isThunder'), flags.thunder ? 1 : 0);
-        gl.uniform1i(uniformLocation(prog3D, 'u_isBg'), flags.bg ? 1 : 0);
-        gl.uniform1i(uniformLocation(prog3D, 'u_isNeonSun'), flags.neonSun ? 1 : 0);
-        gl.uniform1i(uniformLocation(prog3D, 'u_gradFade'), mesh.gradFade ? 1 : 0);
-        gl.uniform1i(uniformLocation(prog3D, 'u_hasTint'), mesh.tint || flags.neonSun ? 1 : 0);
-        const uc = mesh.userColors || {};
-        let tintCol = mesh.tint || [1, 1, 1];
-        let tint2Col = mesh.tint2 || tintCol;
-        if (flags.neonSun) {
-          tintCol = uc.colorsuntop || tintCol;
-          tint2Col = uc.colorsunbottom || tint2Col;
-        }
-        gl.uniform3f(uniformLocation(prog3D, 'u_tint'), tintCol[0], tintCol[1], tintCol[2]);
-        gl.uniform3f(uniformLocation(prog3D, 'u_tint2'), tint2Col[0], tint2Col[1], tint2Col[2]);
-        gl.uniform1i(uniformLocation(prog3D, 'u_hasLightmap'), 0);
-        if (mesh.lightmapUrl) {
-          const lightmapRec = loadTexture(mesh.lightmapUrl, false);
-          if (lightmapRec.loaded) {
-            gl.activeTexture(gl.TEXTURE2);
-            gl.bindTexture(gl.TEXTURE_2D, lightmapRec.texture);
-            gl.uniform1i(uniformLocation(prog3D, 'u_lightmap'), 2);
-            gl.uniform1i(uniformLocation(prog3D, 'u_hasLightmap'), 1);
-            gl.activeTexture(gl.TEXTURE0);
-          }
-        }
-        // Second pass texture (normal/pattern slot), repeat-wrapped like bg clouds.
-        if (mesh.texUrl2) {
-          const tex2Rec = loadTexture(mesh.texUrl2, true);
-          if (tex2Rec.loaded) {
-            gl.activeTexture(gl.TEXTURE1);
-            gl.bindTexture(gl.TEXTURE_2D, tex2Rec.texture);
-            gl.uniform1i(uniformLocation(prog3D, 'u_tex2'), 1);
-            gl.activeTexture(gl.TEXTURE0);
-          }
-        }
-
-        // WE material depth flags (orbital glows disable both).
-        if (mesh.noDepthTest) gl.disable(gl.DEPTH_TEST);
-        if (mesh.noDepthWrite) gl.depthMask(false);
-
-        const sp = getSpecParams(mesh.texUrl);
-        gl.uniform1f(uniformLocation(prog3D, 'u_specStrength'), sp[0]);
-        gl.uniform1f(uniformLocation(prog3D, 'u_specPower'), sp[1]);
-
-        if (flags.body) {
-          const strCol = sceneData.carStripesColor || [0, 0, 0];
-          gl.uniform3f(uniformLocation(prog3D, 'u_paintColor'), bodyCol[0], bodyCol[1], bodyCol[2]);
-          gl.uniform3f(uniformLocation(prog3D, 'u_stripeColor'), strCol[0], strCol[1], strCol[2]);
-        }
-
-        // Load texture for all meshes that have one (including skybox)
-        if (mesh.texUrl && !flags.dome && !flags.shadow && !flags.grid) {
-          const texRec = loadTexture(mesh.texUrl, Boolean(mesh.repeatBase || flags.aurora || flags.bg));
-          if (texRec.loaded) {
-            gl.activeTexture(gl.TEXTURE0);
-            gl.bindTexture(gl.TEXTURE_2D, texRec.texture);
-            gl.uniform1i(uniformLocation(prog3D, 'u_tex'), 0);
-            gl.uniform1i(uniformLocation(prog3D, 'u_hasTex'), 1);
-          } else {
-            gl.uniform1i(uniformLocation(prog3D, 'u_hasTex'), 0);
-            gl.uniform3f(uniformLocation(prog3D, 'u_color'), 0.7, 0.7, 0.75);
-          }
-        } else {
-          gl.uniform1i(uniformLocation(prog3D, 'u_hasTex'), 0);
-          gl.uniform3f(uniformLocation(prog3D, 'u_color'), 0.65, 0.68, 0.72);
-        }
-
-        gl.drawElements(gl.TRIANGLES, gpu.iCount, gpu.idxType, 0);
-
-        if (mesh.noDepthTest) gl.enable(gl.DEPTH_TEST);
-        if (mesh.noDepthWrite) gl.depthMask(true);
-      }
-
-      // --- Pass 1: Render to FBO for reflection source (if car scene with grid) ---
-      const hasGrid = isCarScene && gridModels.length > 0;
-      if (hasGrid) {
-        bindProg3D(view3DRefl); // mirrored camera for the reflection pass
-        ensureReflFbo(width, height);
-        // Unbind the reflection texture before rendering into its own FBO
-        // (avoids a framebuffer/texture feedback loop from the last frame).
-        gl.activeTexture(gl.TEXTURE1);
-        gl.bindTexture(gl.TEXTURE_2D, null);
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindFramebuffer(gl.FRAMEBUFFER, reflFbo);
-        gl.viewport(0, 0, width, height);
-        gl.clearColor(bg[0] * 0.4, bg[1] * 0.4, bg[2] * 0.4, 1.0);
-        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-        // Dome to FBO
-        gl.depthMask(false);
-        gl.uniform1i(uniformLocation(prog3D, 'u_hasReflTex'), 0);
-        for (const model of domeModels) {
-          for (const mesh of model.meshes) drawMesh(model, mesh, { dome: true });
-        }
-        gl.depthMask(true);
-
-        // Opaque car to FBO
-        gl.disable(gl.BLEND);
-        for (const model of opaqueModels) {
-          for (const mesh of model.meshes) {
-            const isBody = Boolean(isCarScene && mesh.texUrl && mesh.texUrl.includes('body'));
-            const isGlass = Boolean(mesh.texUrl && mesh.texUrl.includes('glass'));
-            if (!isGlass) drawMesh(model, mesh, { body: isBody });
-          }
-        }
-        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-      }
-
-      // --- Pass 2: Render to screen ---
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-      gl.viewport(0, 0, width, height);
-      gl.clearColor(bg[0] * 0.4, bg[1] * 0.4, bg[2] * 0.4, 1.0);
-      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-      bindProg3D(); // restore the real camera after the reflection pass
-
-      // 0. Fullscreen background layers (cloudsbg etc.), no depth
-      const bgLayers = sceneData.bgLayers || [];
-      if (bgLayers.length > 0) {
-        gl.disable(gl.DEPTH_TEST);
-        gl.disable(gl.BLEND);
-        for (const layer of bgLayers) {
-          if ((layer.shader || '') === 'cloudsbg') drawCloudsBgLayer(layer, elapsed, width, height);
-        }
-        gl.enable(gl.DEPTH_TEST);
-        bindProg3D(); // drawCloudsBgLayer switched the bound program
-      }
-
-      // 1. Skybox / Dome: render first, no depth write
-      gl.depthMask(false);
-      gl.uniform1i(uniformLocation(prog3D, 'u_hasReflTex'), 0);
-      for (const model of skyboxModels) {
-        for (const mesh of model.meshes) drawMesh(model, mesh, { skybox: true });
-      }
-      for (const model of domeModels) {
-        for (const mesh of model.meshes) drawMesh(model, mesh, { dome: true });
-      }
-      gl.depthMask(true);
-
-      // 2. Opaque parts (bg shader meshes render as fullscreen background)
-      gl.disable(gl.BLEND);
-      for (const model of opaqueModels) {
-        for (const mesh of model.meshes) {
-          const isBody = Boolean(isCarScene && mesh.texUrl && mesh.texUrl.includes('body'));
-          const isGlass = Boolean(mesh.texUrl && mesh.texUrl.includes('glass'));
-          if (isGlass) {
-            glassQueue.push({ model, mesh });
-            continue;
-          }
-          drawMesh(model, mesh, { body: isBody, bg: (mesh.shader || '') === 'bg' });
-        }
-      }
-
-      // 2b. Translucent overlays, far-to-near: neongrid floor first, then
-      // bgfade/neonsun on top. Translucent passes never write depth so their
-      // transparent pixels cannot occlude later geometry.
-      if (translucentQueue.length > 0 || neonGridQueue.length > 0) {
-        gl.enable(gl.BLEND);
-        gl.depthMask(false);
-        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-        for (const { model, mesh } of neonGridQueue) {
-          drawNeonGrid(model, mesh, proj3D, view3D, elapsed);
-        }
-        useProgram(prog3D);
-        for (const { model, mesh } of translucentQueue) {
-          drawMesh(model, mesh, { bg: (mesh.shader || '') === 'bg', neonSun: (mesh.shader || '') === 'neonsun' });
-        }
-        gl.depthMask(true);
-        gl.disable(gl.BLEND);
-      }
-
-      // 3. Shadow (blended)
-      gl.enable(gl.BLEND);
-      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-      for (const model of shadowModels) {
-        for (const mesh of model.meshes) drawMesh(model, mesh, { shadow: true });
-      }
-
-      // 4. Grid floor with FBO reflection
-      if (hasGrid && reflTex) {
-        gl.activeTexture(gl.TEXTURE1);
-        gl.bindTexture(gl.TEXTURE_2D, reflTex);
-        gl.uniform1i(uniformLocation(prog3D, 'u_reflTex'), 1);
-        gl.uniform1i(uniformLocation(prog3D, 'u_hasReflTex'), 1);
-        gl.uniform2f(uniformLocation(prog3D, 'u_resolution'), width, height);
-      }
-      for (const model of gridModels) {
-        for (const mesh of model.meshes) drawMesh(model, mesh, { grid: true });
-      }
-      gl.uniform1i(uniformLocation(prog3D, 'u_hasReflTex'), 0);
-
-      // 5. Glass (blended)
-      for (const { model, mesh } of glassQueue) {
-        drawMesh(model, mesh, { glass: true });
-      }
-
-      // 6. Additive glow queue (jets, orbital effects, self-illuminated)
-      // SRC_ALPHA, ONE: shaped by the shader's output alpha (aurora fade,
-      // thunder sparkle); jets output alpha 1 so they behave as pure additive.
-      gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
-      for (const { model, mesh } of additiveQueue) {
-        const shaderName = (mesh.shader || '').toLowerCase();
-        const jetLike = shaderName.includes('jet') || (mesh.texUrl || '').toLowerCase().includes('jet');
-        const isAurora = !jetLike && shaderName.includes('aurora');
-        const isThunder = !jetLike && shaderName.includes('thunder');
-        drawMesh(model, mesh, {
-          jet: jetLike,
-          aurora: isAurora,
-          thunder: isThunder,
-          selfIllum: !jetLike && !isAurora && !isThunder,
-          followEye: isAurora || isThunder,
-        });
-      }
-
-      // 7. 3D sprites (sun glow billboards) and particle streaks (starfield)
-      const sprites3d = sceneData.sprites || [];
-      const systems3d = sceneData.particles3d || [];
-      if (sceneData.models && sceneData.models.length > 0 && (sprites3d.length > 0 || systems3d.length > 0)) {
-        gl.blendFunc(gl.SRC_ALPHA, gl.ONE); // additive, texture-alpha shaped
-        for (const sp of sprites3d) {
-          // View-space offset = camera-facing quad (WE sprite.vert semantics:
-          // right*(u-0.5) + up*(v-0.5), scaled by 0.5 * object scale).
-          const w = 0.5 * (sp.scale ? sp.scale[0] : 1);
-          const h = 0.5 * (sp.scale ? sp.scale[1] : 1);
-          drawBillboard(sp.origin, [w, 0], [0, h], sp.texUrl, [1, 1, 1, 1], proj3D, view3D);
-        }
-        for (const sys of systems3d) {
-          if (!isPaused) updateParticles3d(sys, dt);
-          const st = getParticles3d(sys);
-          for (const p of st.list) {
-            const fade = Math.min(1, Math.min(p.life, p.maxLife - p.life) / (0.2 * p.maxLife));
-            // Streak: stretch the quad along the view-space velocity.
-            const vv = [
-              view3D[0] * p.vx + view3D[4] * p.vy + view3D[8] * p.vz,
-              view3D[1] * p.vx + view3D[5] * p.vy + view3D[9] * p.vz,
-            ];
-            const speed = Math.hypot(vv[0], vv[1]);
-            const halfLen = p.size * 0.5 * (1 + Math.min(speed * 0.08, 4));
-            const halfWid = p.size * 0.5;
-            let px = 1, py = 0;
-            if (speed > 0.001) { px = vv[0] / speed; py = vv[1] / speed; }
-            const axisX = [px * halfLen * 2, py * halfLen * 2];
-            const axisY = [-py * halfWid * 2, px * halfWid * 2];
-            drawBillboard([p.x, p.y, p.z], axisX, axisY, sys.texUrl, [p.color[0], p.color[1], p.color[2], fade], proj3D, view3D);
-          }
-        }
-      }
-
-      gl.disable(gl.DEPTH_TEST);
-      gl.disable(gl.CULL_FACE);
-      gl.disable(gl.BLEND);
-      return;
-    }
-
-    const sceneW = sceneData.width || 3840;
-    const sceneH = sceneData.height || 2160;
-    // Select layers before cursor updates and both render passes consume them.
-    const currentPeriod = activeTimePeriod(sceneData.timeSchedule, new Date());
-    const renderLayers = sceneData.layers.filter((layer) => layerEnabledByTime(layer, currentPeriod));
-
-    let scale = 1;
-    if (fitMode === 'cover') {
-      scale = Math.max(width / sceneW, height / sceneH);
-    } else if (fitMode === 'contain') {
-      scale = Math.min(width / sceneW, height / sceneH);
-    } // fill: viewport covers the whole canvas (non-uniform stretch)
-
-    const vpW = fitMode === 'fill' ? width : Math.round(sceneW * scale);
-    const vpH = fitMode === 'fill' ? height : Math.round(sceneH * scale);
-    const vpX = fitMode === 'fill' ? 0 : Math.round((width - vpW) / 2);
-    const vpY = fitMode === 'fill' ? 0 : Math.round((height - vpH) / 2);
-
-    // Mirrored cursor in scene px (y-up, matching layer coords). Cover/contain
-    // letterboxing is undone through the viewport rect; fill stretches 1:1.
-    let cursorSX = -1e9, cursorSY = -1e9;
-    if (cursorActive) {
-      if (fitMode === 'fill') {
-        cursorSX = cursorX * sceneW;
-        cursorSY = (1 - cursorY) * sceneH;
-      } else {
-        const dx = cursorX * width, dy = (1 - cursorY) * height;
-        cursorSX = (dx - vpX) / Math.max(vpW, 1) * sceneW;
-        cursorSY = (dy - vpY) / Math.max(vpH, 1) * sceneH;
-      }
-
-    }
-
-    // Hide-near-cursor (WE cursorEnter/leave visibility scripts, e.g. the
-    // butterfly that vanishes to reveal the art beneath): flagged layers
-    // fade out while the pointer is over their rect and fade back after it
-    // leaves. The factor is eased per frame and shared by both passes so the
-    // FBO reflection never shows a hidden layer.
-    for (const layer of renderLayers) {
-      let hideTarget = 0;
-      if (cursorActive && layer.cursorHide) {
-        const pad = Math.min(layer.w, layer.h) * 0.12 + 24;
-        if (Math.abs(cursorSX - layer.x) <= layer.w / 2 + pad &&
-            Math.abs(cursorSY - layer.y) <= layer.h / 2 + pad) hideTarget = 1;
-      }
-      const prevK = layer._cursorHideK || 0;
-      layer._cursorHideK = prevK + (hideTarget - prevK) * Math.min(1, dt * 7);
-    }
-    const hideAlpha = (layer) => (layer.alpha != null ? layer.alpha : 1.0) * (1 - 0.999 * (layer._cursorHideK || 0));
-
-    const needsReflection = renderLayers.some(layer => layer.isReflection);
-    if (needsReflection) ensureFbo(Math.min(sceneW, 2048), Math.min(sceneH, 1080));
-
-    // Projection matrix mapping scene coords (0..sceneW, 0..sceneH) to clip space (-1..1)
-    const proj = mat4Ortho(0, sceneW, 0, sceneH, -1000, 1000);
-
-    // WE serializes scene image objects in painter order: the base is first and
-    // overlays/effect layers follow it. Preserve that order. Reversing it makes
-    // an opaque base layer cover flow/sway shaders and every foreground component,
-    // which presents live scenes as a wrongly cropped static texture.
-    // Pause inactive time-period videos immediately; only the author-selected
-    // morning/day/dusk/night layer may consume decode resources.
-    for (const layer of sceneData.layers) {
-      if (layer.videoUrl) loadVideoTexture(layer, layerEnabledByTime(layer, currentPeriod));
-    }
-
-    const aPos = attribLocation(progBasic, 'a_pos');
-    const aUv = attribLocation(progBasic, 'a_uv');
-    // Ordinary wallpapers do not need a second full-scene render pass.
-    if (needsReflection) {
-      // Pass 1: Render background and sky layers into FBO for reflections
-      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
-      gl.viewport(0, 0, fboWidth, fboHeight);
-      gl.clearColor(0, 0, 0, 0);
-      gl.clear(gl.COLOR_BUFFER_BIT);
-
-      gl.enable(gl.BLEND);
-      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-
-      useProgram(progBasic);
-      gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
-      gl.enableVertexAttribArray(aPos);
-      gl.enableVertexAttribArray(aUv);
-      gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 16, 0);
-      gl.vertexAttribPointer(aUv, 2, gl.FLOAT, false, 16, 8);
-
-      gl.uniformMatrix4fv(uniformLocation(progBasic, 'u_proj'), false, proj);
-      gl.uniform1f(uniformLocation(progBasic, 'u_time'), elapsed);
-      gl.uniform4f(uniformLocation(progBasic, 'u_uvRect'), 0, 0, 1, 1);
-      gl.uniform1f(uniformLocation(progBasic, 'u_bright'), 1);
-      gl.uniform1f(uniformLocation(progBasic, 'u_power'), 1);
-
-      // Render sky & upper layers into FBO
-      for (const layer of renderLayers) {
-        if (layer.isGround || layer.isReflection) continue;
-        const texRec = layer.videoUrl ? loadVideoTexture(layer, true) : loadTexture(layer.texUrl);
-        if (!texRec.loaded) continue;
-
-        const model = mat4Transform2D(layer.x, layer.y, layer.w, layer.h, layer.angle || 0);
-        gl.uniformMatrix4fv(uniformLocation(progBasic, 'u_model'), false, model);
-        gl.uniform1f(uniformLocation(progBasic, 'u_alpha'), hideAlpha(layer));
-        gl.uniform3f(uniformLocation(progBasic, 'u_tint'), 1, 1, 1);
-        gl.uniform1f(uniformLocation(progBasic, 'u_sway'), layer.sway || 0);
-        gl.uniform1f(uniformLocation(progBasic, 'u_sway_speed'), layer.swaySpeed || 1.0);
-
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, texRec.texture);
-        gl.uniform1i(uniformLocation(progBasic, 'u_tex'), 0);
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-      }
-
-    }
-    // Pass 2: Render to screen viewport
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(vpX, vpY, vpW, vpH);
-    gl.clearColor(0, 0, 0, 0);
-    gl.clear(gl.COLOR_BUFFER_BIT);
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-
-    // Render all layers (Sky -> Ground -> Reflection -> Particles)
-    for (const layer of renderLayers) {
-      if (layer.isReflection) {
-        // Water Reflection Pass
-        const maskRec = loadTexture(layer.texUrl);
-        if (!maskRec.loaded) continue;
-
-        useProgram(progReflection);
-        gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
-        const rPos = attribLocation(progReflection, 'a_pos');
-        const rUv = attribLocation(progReflection, 'a_uv');
-        gl.enableVertexAttribArray(rPos);
-        gl.enableVertexAttribArray(rUv);
-        gl.vertexAttribPointer(rPos, 2, gl.FLOAT, false, 16, 0);
-        gl.vertexAttribPointer(rUv, 2, gl.FLOAT, false, 16, 8);
-
-        // Draw the reflection quad at the layer's own rect (fullscreen for
-        // legacy scene-wide reflection layers).
-        const model = mat4Transform2D(layer.x, layer.y, layer.w, layer.h, layer.angle || 0);
-        gl.uniformMatrix4fv(uniformLocation(progReflection, 'u_proj'), false, proj);
-        gl.uniformMatrix4fv(uniformLocation(progReflection, 'u_model'), false, model);
-        gl.uniform4f(uniformLocation(progReflection, 'u_uvRect'), 0, 0, 1, 1);
-        gl.uniform1f(uniformLocation(progReflection, 'u_time'), elapsed);
-        gl.uniform1f(uniformLocation(progReflection, 'u_alpha'), 0.85);
-
-        // Scene-uv rect of the quad (scene v grows downward, 0 at the top).
-        const rectLeftU = (layer.x - layer.w / 2) / sceneW;
-        const rectTopV = 1 - (layer.y + layer.h / 2) / sceneH;
-        gl.uniform4f(uniformLocation(progReflection, 'u_rect'),
-          rectLeftU, rectTopV, layer.w / sceneW, layer.h / sceneH);
-        // Water line follows the scene data when the parser resolved one;
-        // otherwise keep the legacy 0.65 / 0.42 / 0.38 window.
-        const waterLine = typeof layer.waterLine === 'number' ? layer.waterLine : 0.65;
-        const depthScale = (1 - waterLine) / 0.35;
-        gl.uniform1f(uniformLocation(progReflection, 'u_waterLine'), waterLine);
-        gl.uniform2f(uniformLocation(progReflection, 'u_reflectRange'),
-          waterLine - 0.23 * depthScale, 0.38 * depthScale);
-
-
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, fboTex);
-        gl.uniform1i(uniformLocation(progReflection, 'u_fbo'), 0);
-
-        gl.activeTexture(gl.TEXTURE1);
-        gl.bindTexture(gl.TEXTURE_2D, maskRec.texture);
-        gl.uniform1i(uniformLocation(progReflection, 'u_mask'), 1);
-
-        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-        continue;
-      }
-
-      // WE flowimage layer (flowing nebula): mask + 3 cross-fading layers.
-      // All four textures are sampled with the plain quad UV (WE stretches
-      // mask and content over the whole quad); served PNGs are already
-      // cropped to the image rect, and clamp wrapping matches clampuvs.
-      if (layer.shader === 'flowimage' && layer.texUrls && layer.texUrls.length >= 4) {
-        const recs = layer.texUrls.slice(0, 4).map((u) => loadTexture(u));
-        if (!recs.every((r) => r.loaded)) continue;
-        useProgram(progFlow);
-        gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
-        const fPos = attribLocation(progFlow, 'a_pos');
-        const fUv = attribLocation(progFlow, 'a_uv');
-        gl.enableVertexAttribArray(fPos);
-        gl.enableVertexAttribArray(fUv);
-        gl.vertexAttribPointer(fPos, 2, gl.FLOAT, false, 16, 0);
-        gl.vertexAttribPointer(fUv, 2, gl.FLOAT, false, 16, 8);
-        const model = mat4Transform2D(layer.x, layer.y, layer.w, layer.h, layer.angle || 0);
-        gl.uniformMatrix4fv(uniformLocation(progFlow, 'u_proj'), false, proj);
-        gl.uniformMatrix4fv(uniformLocation(progFlow, 'u_model'), false, model);
-        const fcrop = layer.uvCrop || [0, 0, 1, 1];
-        gl.uniform4f(uniformLocation(progFlow, 'u_uvRect'), fcrop[0], fcrop[1], fcrop[2], fcrop[3]);
-        gl.uniform1f(uniformLocation(progFlow, 'u_time'), elapsed);
-        const nums = layer.nums || {};
-        gl.uniform3f(uniformLocation(progFlow, 'u_speeds'),
-          nums.Speed0 ?? 0.01, nums.Speed1 ?? 0.01, nums.Speed2 ?? 0.01);
-        gl.uniform1f(uniformLocation(progFlow, 'u_amp'), nums.Amount ?? 1);
-        gl.uniform1f(uniformLocation(progFlow, 'u_bright'), nums.Bright ?? 1);
-        const units = ['u_mask', 'u_l1', 'u_l2', 'u_l3'];
-        for (let ui = 0; ui < 4; ui++) {
-          gl.activeTexture(gl.TEXTURE0 + ui);
-          gl.bindTexture(gl.TEXTURE_2D, recs[ui].texture);
-          gl.uniform1i(uniformLocation(progFlow, units[ui]), ui);
-        }
-        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-        gl.activeTexture(gl.TEXTURE0);
-        continue;
-      }
-
-      // WE flag layer (rippling tinted cloth): eagleflag
-      if (layer.shader === 'flag' && layer.texUrls && layer.texUrls.length >= 3) {
-        const recs = layer.texUrls.slice(0, 3).map((u) => loadTexture(u, true));
-        if (!recs.every((r) => r.loaded)) continue;
-        useProgram(progFlag);
-        gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
-        const flPos = attribLocation(progFlag, 'a_pos');
-        const flUv = attribLocation(progFlag, 'a_uv');
-        gl.enableVertexAttribArray(flPos);
-        gl.enableVertexAttribArray(flUv);
-        gl.vertexAttribPointer(flPos, 2, gl.FLOAT, false, 16, 0);
-        gl.vertexAttribPointer(flUv, 2, gl.FLOAT, false, 16, 8);
-        const model = mat4Transform2D(layer.x, layer.y, layer.w, layer.h, layer.angle || 0);
-        gl.uniformMatrix4fv(uniformLocation(progFlag, 'u_proj'), false, proj);
-        gl.uniformMatrix4fv(uniformLocation(progFlag, 'u_model'), false, model);
-        const flcrop = layer.uvCrop || [0, 0, 1, 1];
-        gl.uniform4f(uniformLocation(progFlag, 'u_uvRect'), flcrop[0], flcrop[1], flcrop[2], flcrop[3]);
-        gl.uniform1f(uniformLocation(progFlag, 'u_time'), elapsed);
-        const fnums = layer.nums || {};
-        gl.uniform1f(uniformLocation(progFlag, 'u_speed'), fnums.Speed ?? 0.4);
-        gl.uniform1f(uniformLocation(progFlag, 'u_strength'), fnums.Strength ?? 0.5);
-        const fcols = layer.userColors || {};
-        const fc1 = fcols.color1 || [0, 0, 0];
-        const fc2 = fcols.color2 || [0, 0, 0];
-        const fc3 = fcols.color3 || [1, 1, 1];
-        gl.uniform3f(uniformLocation(progFlag, 'u_color1'), fc1[0], fc1[1], fc1[2]);
-        gl.uniform3f(uniformLocation(progFlag, 'u_color2'), fc2[0], fc2[1], fc2[2]);
-        gl.uniform3f(uniformLocation(progFlag, 'u_color3'), fc3[0], fc3[1], fc3[2]);
-        const funits = ['u_tex', 'u_normal', 'u_cloth'];
-        for (let ui = 0; ui < 3; ui++) {
-          gl.activeTexture(gl.TEXTURE0 + ui);
-          gl.bindTexture(gl.TEXTURE_2D, recs[ui].texture);
-          gl.uniform1i(uniformLocation(progFlag, funits[ui]), ui);
-        }
-        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-        gl.activeTexture(gl.TEXTURE0);
-        continue;
-      }
-
-      // WE xray layer (cursor reveal, e.g. the butterfly that vanishes to
-      // show the art beneath): the blend texture replaces the base around
-      // the pointer. Without a resolved blend texture the layer falls
-      // through to the standard branch below.
-      if (layer.xrayBlendUrl) {
-        const baseRec = layer.videoUrl ? loadVideoTexture(layer, true) : loadTexture(layer.texUrl);
-        const blendRec = loadTexture(layer.xrayBlendUrl);
-        if (baseRec.loaded && blendRec.loaded) {
-          useProgram(progXray);
-          gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
-          const xPos = attribLocation(progXray, 'a_pos');
-          const xUv = attribLocation(progXray, 'a_uv');
-          gl.enableVertexAttribArray(xPos);
-          gl.enableVertexAttribArray(xUv);
-          gl.vertexAttribPointer(xPos, 2, gl.FLOAT, false, 16, 0);
-          gl.vertexAttribPointer(xUv, 2, gl.FLOAT, false, 16, 8);
-          const xModel = mat4Transform2D(layer.x, layer.y, layer.w, layer.h, layer.angle || 0);
-          gl.uniformMatrix4fv(uniformLocation(progXray, 'u_proj'), false, proj);
-          gl.uniformMatrix4fv(uniformLocation(progXray, 'u_model'), false, xModel);
-          const xcrop = layer.uvCrop || [0, 0, 1, 1];
-          gl.uniform4f(uniformLocation(progXray, 'u_uvRect'), xcrop[0], xcrop[1], xcrop[2], xcrop[3]);
-          gl.uniform1f(uniformLocation(progXray, 'u_alpha'), hideAlpha(layer));
-          gl.uniform2f(uniformLocation(progXray, 'u_cursorUV'),
-            (cursorSX - (layer.x - layer.w / 2)) / layer.w,
-            ((layer.y + layer.h / 2) - cursorSY) / layer.h);
-          gl.uniform2f(uniformLocation(progXray, 'u_xrayAspect'), layer.w / Math.max(layer.h, 1), 1);
-          gl.uniform1f(uniformLocation(progXray, 'u_pointerScale'),
-            1 / Math.max(layer.xraySize || 0.2, 0.02));
-          gl.uniform1f(uniformLocation(progXray, 'u_multiply'), layer.xrayMultiply ?? 1);
-          gl.uniform1f(uniformLocation(progXray, 'u_cursorOn'), cursorActive ? 1 : 0);
-          gl.activeTexture(gl.TEXTURE0);
-          gl.bindTexture(gl.TEXTURE_2D, baseRec.texture);
-          gl.uniform1i(uniformLocation(progXray, 'u_tex'), 0);
-          gl.activeTexture(gl.TEXTURE1);
-          gl.bindTexture(gl.TEXTURE_2D, blendRec.texture);
-          gl.uniform1i(uniformLocation(progXray, 'u_blend'), 1);
-          gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-          gl.activeTexture(gl.TEXTURE0);
-          continue;
-        }
-      }
-
-      // WE shake effect (e.g. eye blinking, breathing UV deformation)
-      if (layer.shakeEffect) {
-        const shake = layer.shakeEffect;
-        const baseRec = layer.videoUrl ? loadVideoTexture(layer, true) : loadTexture(layer.texUrl);
-        const flowRec = shake.flowMaskUrl ? loadTexture(shake.flowMaskUrl) : null;
-        const maskRec = shake.opacityMaskUrl ? loadTexture(shake.opacityMaskUrl) : null;
-        if (baseRec.loaded && (!flowRec || flowRec.loaded) && (!maskRec || maskRec.loaded)) {
-          gl.enable(gl.BLEND);
-          gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-          useProgram(progShake);
-          gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
-          const sPos = attribLocation(progShake, 'a_pos');
-          const sUv = attribLocation(progShake, 'a_uv');
-          gl.enableVertexAttribArray(sPos);
-          gl.enableVertexAttribArray(sUv);
-          gl.vertexAttribPointer(sPos, 2, gl.FLOAT, false, 16, 0);
-          gl.vertexAttribPointer(sUv, 2, gl.FLOAT, false, 16, 8);
-          const sModel = mat4Transform2D(layer.x, layer.y, layer.w, layer.h, layer.angle || 0);
-          gl.uniformMatrix4fv(uniformLocation(progShake, 'u_proj'), false, proj);
-          gl.uniformMatrix4fv(uniformLocation(progShake, 'u_model'), false, sModel);
-          const scrop = layer.uvCrop || [0, 0, 1, 1];
-          gl.uniform4f(uniformLocation(progShake, 'u_uvRect'), scrop[0], scrop[1], scrop[2], scrop[3]);
-          gl.uniform1f(uniformLocation(progShake, 'u_time'), elapsed);
-          gl.uniform1f(uniformLocation(progShake, 'u_speed'), shake.speed || 1.0);
-          gl.uniform1f(uniformLocation(progShake, 'u_strength'), shake.strength || 0.1);
-          gl.uniform2f(uniformLocation(progShake, 'u_friction'), shake.friction[0], shake.friction[1]);
-          gl.uniform2f(uniformLocation(progShake, 'u_bounds'), shake.bounds[0], shake.bounds[1]);
-          gl.uniform1i(uniformLocation(progShake, 'u_direction'), shake.direction || 0);
-          gl.uniform1f(uniformLocation(progShake, 'u_alpha'), hideAlpha(layer));
-          const lnums = layer.nums || {};
-          gl.uniform1f(uniformLocation(progShake, 'u_bright'), lnums.Bright ?? 1);
-          gl.uniform1f(uniformLocation(progShake, 'u_power'), lnums.Power ?? 1);
-
-          gl.activeTexture(gl.TEXTURE0);
-          gl.bindTexture(gl.TEXTURE_2D, baseRec.texture);
-          gl.uniform1i(uniformLocation(progShake, 'u_tex'), 0);
-
-          if (flowRec) {
-            gl.activeTexture(gl.TEXTURE1);
-            gl.bindTexture(gl.TEXTURE_2D, flowRec.texture);
-            gl.uniform1i(uniformLocation(progShake, 'u_flow'), 1);
-          }
-          if (maskRec) {
-            gl.activeTexture(gl.TEXTURE2);
-            gl.bindTexture(gl.TEXTURE_2D, maskRec.texture);
-            gl.uniform1i(uniformLocation(progShake, 'u_mask'), 2);
-            gl.uniform1i(uniformLocation(progShake, 'u_hasMask'), 1);
-          } else {
-            gl.uniform1i(uniformLocation(progShake, 'u_hasMask'), 0);
-          }
-          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-          gl.activeTexture(gl.TEXTURE0);
-          continue;
-        }
-      }
-
-      // Standard image or embedded-video layer.
-      const texRec = layer.videoUrl ? loadVideoTexture(layer, true) : loadTexture(layer.texUrl);
-      if (!texRec.loaded) continue;
-
-      gl.enable(gl.BLEND);
-      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-      useProgram(progBasic);
-      gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
-      gl.enableVertexAttribArray(aPos);
-      gl.enableVertexAttribArray(aUv);
-      gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 16, 0);
-      gl.vertexAttribPointer(aUv, 2, gl.FLOAT, false, 16, 8);
-
-      const crop = layer.uvCrop || [0, 0, 1, 1];
-      gl.uniform4f(uniformLocation(progBasic, 'u_uvRect'), crop[0], crop[1], crop[2], crop[3]);
-      const lnums = layer.nums || {};
-      gl.uniform1f(uniformLocation(progBasic, 'u_bright'), lnums.Bright ?? 1);
-      gl.uniform1f(uniformLocation(progBasic, 'u_power'), lnums.Power ?? 1);
-
-      const model = mat4Transform2D(layer.x, layer.y, layer.w, layer.h, layer.angle || 0);
-      gl.uniformMatrix4fv(uniformLocation(progBasic, 'u_proj'), false, proj);
-      gl.uniformMatrix4fv(uniformLocation(progBasic, 'u_model'), false, model);
-      gl.uniform1f(uniformLocation(progBasic, 'u_time'), elapsed);
-      gl.uniform1f(uniformLocation(progBasic, 'u_alpha'), hideAlpha(layer));
-      gl.uniform3f(uniformLocation(progBasic, 'u_tint'), 1, 1, 1);
-
-      gl.uniform1f(uniformLocation(progBasic, 'u_sway'), layer.sway || 0);
-      gl.uniform1f(uniformLocation(progBasic, 'u_sway_speed'), layer.swaySpeed || 1.0);
-
-      gl.activeTexture(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_2D, texRec.texture);
-      gl.uniform1i(uniformLocation(progBasic, 'u_tex'), 0);
-      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-    }
-
-    // Render Particles (Shooting Stars, Fireflies)
-    if (activeParticles.length > 0) {
-      useProgram(progParticle);
-      gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
-      const pPos = attribLocation(progParticle, 'a_pos');
-      const pUv = attribLocation(progParticle, 'a_uv');
-      gl.enableVertexAttribArray(pPos);
-      gl.enableVertexAttribArray(pUv);
-      gl.vertexAttribPointer(pPos, 2, gl.FLOAT, false, 16, 0);
-      gl.vertexAttribPointer(pUv, 2, gl.FLOAT, false, 16, 8);
-      gl.uniformMatrix4fv(uniformLocation(progParticle, 'u_proj'), false, proj);
-      gl.uniform4f(uniformLocation(progParticle, 'u_uvRect'), 0, 0, 1, 1);
-
-      gl.blendFunc(gl.SRC_ALPHA, gl.ONE); // Additive luminous particles
-
-      for (const p of activeParticles) {
-        const progress = p.life / p.maxLife;
-        const alpha = Math.sin(progress * Math.PI); // Fade in & out
-        const texRec = p.system.texUrl ? loadTexture(p.system.texUrl) : null;
-        if (texRec && texRec.loaded) {
-          gl.activeTexture(gl.TEXTURE0);
-          gl.bindTexture(gl.TEXTURE_2D, texRec.texture);
-          gl.uniform1i(uniformLocation(progParticle, 'u_tex'), 0);
-        }
-
-        // Draw trail if meteor
-        if (p.trail && p.trail.length > 1) {
-          for (let ti = 0; ti < p.trail.length; ti++) {
-            const tp = p.trail[ti];
-            const tRatio = (ti + 1) / p.trail.length;
-            const tAlpha = alpha * tRatio * 0.6;
-            const tModel = mat4Transform2D(tp.x, tp.y, p.size * tRatio * 1.5, p.size * 0.4, Math.atan2(p.vy, p.vx));
-            gl.uniformMatrix4fv(uniformLocation(progParticle, 'u_model'), false, tModel);
-            gl.uniform4f(uniformLocation(progParticle, 'u_color'), p.color[0], p.color[1], p.color[2], tAlpha);
-            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-          }
-        }
-
-        const model = mat4Transform2D(p.x, p.y, p.size * (p.system.type === 'meteor' ? 3 : 1), p.size, Math.atan2(p.vy, p.vx));
-        gl.uniformMatrix4fv(uniformLocation(progParticle, 'u_model'), false, model);
-        gl.uniform4f(uniformLocation(progParticle, 'u_color'), p.color[0], p.color[1], p.color[2], alpha * p.color[3]);
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-      }
-      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-    }
-  }
-
-  // One scheduler owns both handles. Cap wallpaper work at 30 FPS even on
-  // 144/240 Hz displays, and never poll while waiting, paused or context-lost.
-  const frameInterval = 1000 / 30;
-  let rafId = null, timerId = null, nextFrameAt = 0;
-  function cancelRender() {
-    if (rafId !== null) cancelAnimationFrame(rafId);
-    if (timerId !== null) clearTimeout(timerId);
-    rafId = timerId = null;
-  }
-  function scheduleRender() {
-    if (disposed || isPaused || contextLost || !sceneData || rafId !== null || timerId !== null) return;
-    const delay = nextFrameAt - performance.now();
-    if (delay > 0) {
-      timerId = setTimeout(() => { timerId = null; scheduleRender(); }, delay);
-    } else {
-      rafId = requestAnimationFrame(render);
-    }
-  }
-  function stopWithError(error) {
-    console.error('we-scene-player render error:', error && error.stack || String(error));
-    dispose();
-    window.parent.postMessage({ type: 'dsh-scene-failed' }, '*');
-  }
-  function dispose() {
-    if (disposed) return;
-    disposed = true;
-    cancelRender();
-    for (const rec of videoTextureCache.values()) {
-      if (rec.videoFrameId != null) rec.video.cancelVideoFrameCallback?.(rec.videoFrameId);
-      rec.video.pause();
-      rec.video.removeAttribute('src');
-      rec.video.load();
-    }
-    videoTextureCache.clear();
-    textureCache.clear();
-    shaderCache.clear();
-    activeParticles = [];
-    gl.getExtension('WEBGL_lose_context')?.loseContext();
-  }
-  window.__hermesSceneDispose = dispose;
-  window.addEventListener('pagehide', dispose);
-  function render(now) {
-    rafId = null;
-    if (disposed || isPaused || contextLost) return;
-    try {
-      renderFrame(now);
-    } catch (e) {
-      stopWithError(e);
-      return;
-    }
-    nextFrameAt = now + frameInterval;
-    scheduleRender();
-  }
-
-  canvas.addEventListener('webglcontextlost', (event) => {
-    event.preventDefault();
-    contextLost = true;
-    cancelRender();
-    for (const rec of videoTextureCache.values()) rec.video.pause();
-  });
-  canvas.addEventListener('webglcontextrestored', () => {
-    // WebGL objects are invalid after restoration. Ask the embedding
-    // controller to rebuild this isolated renderer instead of drawing with
-    // stale programs/textures. The player frame is sandboxed without
-    // allow-same-origin, so the embedding page's origin is unknown here;
-    // '*' delivers to the window the event source check identifies.
-    if (!disposed) window.parent.postMessage({ type: 'dsh-scene-needs-reload' }, '*');
-  });
-
-  // Load manifest
-  const token = window.location.pathname.split('/').filter(Boolean).pop();
-  fetch('/api/skin-center/we/scene-manifest/' + token)
-    .then(res => res.json())
-    .then(data => {
-      if (!disposed && data.ok && data.manifest) {
-        sceneData = data.manifest;
-        scheduleRender();
-      }
-    })
-    .catch(stopWithError);
-
-  // Listen for controller messages; only the embedding parent may steer the
-  // player. Origin cannot filter here: the player runs sandboxed without
-  // allow-same-origin, so an origin compare would be browser-dependent and
-  // the parent's messages carry its real origin. Only the identity of the
-  // sender (the exact embedding window) is trustworthy.
-  window.addEventListener('message', (ev) => {
-    if (ev.source !== window.parent) return;
-    const msg = ev.data;
-    if (!msg || typeof msg !== 'object') return;
-    if (disposed) return;
-    if (msg.type === 'dsh-set-fit' && msg.fit) {
-      fitMode = msg.fit;
-    } else if (msg.type === 'dsh-set-pause') {
-      if (isPaused === !!msg.paused) return;
-      isPaused = !!msg.paused;
-      if (isPaused) { pausedAt = performance.now(); cancelRender(); }
-      for (const rec of videoTextureCache.values()) {
-        if (isPaused) {
-          rec.video.pause();
-        } else if (rec.enabled && !contextLost) {
-          void rec.video.play().catch(() => {});
-        }
-      }
-      if (!isPaused) {
-        const now = performance.now();
-        if (pausedAt !== null) startTime += now - pausedAt;
-        pausedAt = null;
-        lastTime = now;
-        scheduleRender();
-      }
-    } else if (msg.type === 'dsh-set-cursor') {
-      // Mirrored pointer from the host (the iframe itself never gets input).
-      if (Number.isFinite(msg.x)) cursorX = Math.min(1, Math.max(0, msg.x));
-      if (Number.isFinite(msg.y)) cursorY = Math.min(1, Math.max(0, msg.y));
-      mouseX = cursorX;
-      mouseY = cursorY;
-      if ('active' in msg) cursorActive = !!msg.active;
-      else cursorActive = true;
-    } else if (msg.type === 'dsh-recover-renderer') {
-      if (gl.isContextLost()) {
-        const ext = gl.getExtension('WEBGL_lose_context');
-        if (ext) ext.restoreContext();
-        else window.parent.postMessage({ type: 'dsh-scene-needs-reload' }, '*');
-      } else {
-        // Force an immediate fresh frame after compositor/theme changes.
-        scheduleRender();
-      }
-    }
-  });
-
-})();
-</script>
-</body>
-</html>
-`;
-
-/**
- * The Wallpaper Engine Web API shim, served to web-type wallpaper iframes.
- *
- * Web wallpapers are authored against APIs that Wallpaper Engine injects
- * into its CEF host before the page scripts run: property listeners (user
- * customization values), the audio-level listener (64 stereo bands), and
- * LED/RGB hardware hooks. Inside the skin center there is no editor session
- * and no hardware, so the shim installs benign defaults: user properties are
- * seeded from the wallpaper's project.json defaults and delivered once the
- * page registers its listener, the audio listener registers but is fed
- * silence, and hardware APIs become no-ops. Wallpapers that never touch these
- * APIs are unaffected; wallpapers that do degrade to their non-reactive
- * visuals instead of crashing on undefined globals.
- * @module @linxin666/dsh-client-ui-skin-center/we-shim-source
- */
-
-/** The shim source, injected ahead of every web wallpaper HTML document. */
-const WE_SHIM_JS = [
-  '(function () {',
-  "  if (window.__dshWeShim) return;",
-  "  window.__dshWeShim = true;",
-  '  var props = {};',
-  '  var defaults = window.__dshWeDefaultProps || {};',
-  '  for (var dk in defaults) { props[dk] = defaults[dk]; }',
-  '  window.wallpaperPropertyListener = {',
-  '    applyUserProperties: function (p) {',
-  '      if (p && typeof p === "object") { for (var k in p) { props[k] = p[k]; } }',
-  '    },',
-  '    applyGeneralProperties: function () {},',
-  '    setUserProperty: function (k, v) { props[k] = v; },',
-  '    getUserProperty: function (k) { return props[k]; }',
-  '  };',
-  '  // WE delivers the property defaults once the page listener is in place.',
-  '  // Wallpapers typically replace wallpaperPropertyListener with their own',
-  '  // object; frameworks (Angular etc.) bootstrap asynchronously and may not',
-  '  // survive property delivery before their services are ready, so deliver',
-  '  // at a few staggered points after load.',
-  '  var deliver = function () {',
-  '    try {',
-  '      var l = window.wallpaperPropertyListener;',
-  '      if (l && typeof l.applyUserProperties === "function" && Object.keys(defaults).length) {',
-  '        l.applyUserProperties(defaults);',
-  '      }',
-  '    } catch (e) {}',
-  '  };',
-  '  var kick = function () {',
-  '    var delays = [800, 2000, 4000];',
-  '    for (var di = 0; di < delays.length; di++) {',
-  '      setTimeout(deliver, delays[di]);',
-  '    }',
-  '  };',
-  "  if (document.readyState === 'complete') { kick(); }",
-  "  else { window.addEventListener('load', kick); }",
-  '  var audioListener = null;',
-  '  window.wallpaperRegisterAudioListener = function (cb) {',
-  '    if (typeof cb === "function") audioListener = cb;',
-  '  };',
-  '  // Silence buffer WE wallpapers expect: 64 bands x 2 channels.',
-  '  var silence = [];',
-  '  for (var i = 0; i < 128; i++) silence.push(0);',
-  '  window.__dshWeAudio = {',
-  '    listener: function () { return audioListener; },',
-  '    silence: silence,',
-  '    pump: function () { if (audioListener) { try { audioListener(silence); } catch (e) {} } }',
-  '  };',
-  '  window.wallpaperRegisterLEDColorListener = function () {};',
-  '  window.wallpaperRegisterFPSListener = function () {};',
-  '  // Cursor bridge: the backdrop iframe never receives input',
-  '  // (pointer-events none), so the host mirrors the real pointer position',
-  '  // via hermes-we-cursor messages. Synthesized mousemove events let pages',
-  '  // hide elements near the cursor exactly as if the pointer hovered the',
-  '  // page itself (WE forwards real mouse into CEF). Unchanged positions',
-  '  // skip the dispatch so elementFromPoint layout work stays bounded.',
-  '  var cursorPos = { x: 0.5, y: 0.5, active: false };',
-  '  window.__hermesCursor = cursorPos;',
-  '  var lastDispatch = null;',
-  '  var synthCursor = function () {',
-  '    try {',
-  '      var cx = cursorPos.x * window.innerWidth;',
-  '      var cy = cursorPos.y * window.innerHeight;',
-  '      if (lastDispatch && lastDispatch[0] === cx && lastDispatch[1] === cy) return;',
-  '      lastDispatch = [cx, cy];',
-  '      var target = null;',
-  '      try { target = document.elementFromPoint(cx, cy); } catch (e) { target = null; }',
-  '      if (!target) target = document.documentElement || document;',
-  '      var opts = { bubbles: true, cancelable: true, clientX: cx, clientY: cy };',
-  '      var evt = null;',
-  '      try { evt = new MouseEvent("mousemove", opts); }',
-  '      catch (e) {',
-  '        evt = document.createEvent("MouseEvents");',
-  '        evt.initMouseEvent("mousemove", true, true, window, 0, cx, cy, cx, cy, false, false, false, false, 0, null);',
-  '      }',
-  '      target.dispatchEvent(evt);',
-  '    } catch (e) {}',
-  '  };',
-  '  window.addEventListener("message", function (ev) {',
-  '    if (ev.source !== window.parent) return;',
-  '    var m = ev.data;',
-  '    if (!m || m.type !== "hermes-we-cursor") return;',
-  '    if (isFinite(m.x)) cursorPos.x = Math.min(1, Math.max(0, m.x));',
-  '    if (isFinite(m.y)) cursorPos.y = Math.min(1, Math.max(0, m.y));',
-  '    if ("active" in m) cursorPos.active = !!m.active;',
-  '    else cursorPos.active = true;',
-  '    if (cursorPos.active) synthCursor();',
-  '  });',
-  '})();',
-  '',
-].join('\n')
-
-// ─── Scene Player Bridge ─────────────────────────────────────
-/** Feed the DSH WebGL player through a sandboxed srcdoc instead of its DSH HTTP routes. */
-function scenePlayerHtml(sound = false, volume = 100) {
-  const audioSettings = `window.__hermesSceneSound=${Boolean(sound)};window.__hermesSceneVolume=${Math.min(100, Math.max(0, Number.isFinite(Number(volume)) ? Number(volume) : 100)) / 100};`
-  const shim = `<script>
-    (() => {
-      let deliver;
-      const manifest = new Promise(resolve => { deliver = resolve; });
-      window.addEventListener('message', event => {
-        if (event.source === window.parent && event.data?.type === 'hermes-scene-manifest') deliver(event.data.manifest);
-      });
-      const originalFetch = window.fetch.bind(window);
-      window.fetch = (input, options) => String(input).startsWith('/api/skin-center/we/scene-manifest/')
-        ? manifest.then(value => new Response(JSON.stringify({ ok: true, manifest: value }),
-            { headers: { 'content-type': 'application/json' } }))
-        : originalFetch(input, options);
-    })();
-  </script>`
-  return WE_SCENE_PLAYER_HTML
-    .replace('video.muted = true;', 'video.muted = !window.__hermesSceneSound; video.volume = window.__hermesSceneVolume;')
-    .replace("} else if (msg.type === 'dsh-recover-renderer') {", `} else if (msg.type === 'dsh-set-audio') {
-      window.__hermesSceneSound = !!msg.sound;
-      window.__hermesSceneVolume = Math.max(0, Math.min(1, Number(msg.volume) / 100));
-      for (const record of videoTextureCache.values()) {
-        record.video.muted = !window.__hermesSceneSound;
-        record.video.volume = window.__hermesSceneVolume;
-      }
-    } else if (msg.type === 'dsh-recover-renderer') {`)
-    .replace('<script>', `<script>${audioSettings}</script>` + shim + '<script>')
 }
 
-function replaceResources(value, URLs) {
-  if (typeof value === 'string') return URLs[value] || value
-  if (Array.isArray(value)) return value.map(item => replaceResources(item, URLs))
-  if (value && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, replaceResources(item, URLs)]))
-  }
-  return value
+function activeRotationGroup(config) {
+  const groups = Array.isArray(config?.rotationGroups) ? config.rotationGroups : []
+  return groups.find(group => group.id === config?.rotationGroupId) || null
 }
 
-function sceneResourceFileUrl(path) {
-  if (typeof path !== 'string' || !/^[A-Za-z]:[\\/]/.test(path) || !/\.(png|mp4)$/i.test(path)) return null
-  return `file:///${path.replace(/\\/g, '/').split('/').map((part, index) => index ? encodeURIComponent(part) : part).join('/')}`
+function groupWallpapers(items, group, hiddenIds = []) {
+  const byId = new Map((Array.isArray(items) ? items : []).map(item => [item.id, item]))
+  const hidden = new Set(hiddenIds)
+  return (group?.wallpaperIds || [])
+    .map(id => byId.get(id))
+    .filter(item => item && item.id && item.dir && item.mediaPath && !hidden.has(item.id))
 }
 
-async function loadSceneManifest(bridge, manifestPath, prepareScene = null, signal = null) {
-  if (!bridge?.readFileText || !bridge?.readFileDataUrl) throw new Error('Hermes local file bridge unavailable')
-  const readManifest = async path => {
-    signal?.throwIfAborted()
-    const file = await bridge.readFileText(path)
-    signal?.throwIfAborted()
-    if (file?.truncated || !file?.text) throw new Error('Scene manifest is missing or truncated')
-    const data = JSON.parse(file.text)
-    if (!data.manifest || typeof data.resources !== 'object') throw new Error('Scene manifest is invalid')
-    return data
-  }
-  let data = await readManifest(manifestPath)
-  // A saved selection points directly at its old cache. Upgrading the backend
-  // key alone cannot migrate it: prepare it before loading any obsolete assets.
-  if (Number(data.parserVersion || 0) < 6 && prepareScene && typeof data.scenePath === 'string') {
-    const dir = data.scenePath.replace(/[\\/][^\\/]+$/, '')
-    const prepared = await prepareScene(dir)
-    if (!prepared?.ok || !prepared.manifest || !prepared.manifestPath) {
-      throw new Error(prepared?.error || 'Scene cache refresh failed')
-    }
-    data = await readManifest(prepared.manifestPath)
-  }
-  const paths = Object.entries(data.resources)
-  const URLs = {}
-  const objectUrls = []
-  let totalBytes = 0
-  const loadedPaths = new Map()
-  // The Electron file-origin player can decode cache files directly. Verify
-  // access with HEAD and retain the bridge path on restricted/older hosts.
-  // In particular, videos stay native media streams instead of whole-file
-  // base64 IPC strings + decoded buffers + resident Blob copies.
-  const nativeFiles = typeof window !== 'undefined' && window.location?.protocol === 'file:' && window.hermesDesktop === bridge
-  try {
-    // Read sequentially: several 100 MiB video layers can otherwise multiply
-    // transient base64 and decoded buffers until the Hermes renderer runs OOM.
-    for (const [url, path] of paths) {
-      signal?.throwIfAborted()
-      if (typeof path !== 'string') continue
-      const pathKey = path.replace(/\\/g, '/').toLowerCase()
-      if (loadedPaths.has(pathKey)) { URLs[url] = loadedPaths.get(pathKey); continue }
-      const fileUrl = nativeFiles ? sceneResourceFileUrl(path) : null
-      if (fileUrl) {
-        try {
-          const response = await fetch(fileUrl, { method: 'HEAD', signal })
-          signal?.throwIfAborted()
-          if (response.ok) {
-            URLs[url] = fileUrl
-            loadedPaths.set(pathKey, fileUrl)
-            continue
-          }
-        } catch { signal?.throwIfAborted() }
-      }
-      let data
-      try { data = await bridge.readFileDataUrl(path) }
-      catch {
-        if (!bridge.readFileDataUrlForAttach) throw new Error('Scene resource exceeds the Hermes file-read limit')
-        data = await bridge.readFileDataUrlForAttach(path)
-      }
-      signal?.throwIfAborted()
-      const blob = await fetch(data, { signal }).then(response => response.blob())
-      signal?.throwIfAborted()
-      totalBytes += blob.size
-      if (totalBytes > 512 * 1024 * 1024) throw new Error('Scene resources exceed the 512 MiB renderer budget')
-      const objectUrl = URL.createObjectURL(blob)
-      objectUrls.push(objectUrl)
-      URLs[url] = objectUrl
-      loadedPaths.set(pathKey, objectUrl)
-    }
-    return { manifest: replaceResources(data.manifest, URLs), framePath: data.framePath,
-      missing: data.missing || [], resourceCount: Object.keys(URLs).length,
-      scripted: Boolean(data.scripted), objectUrls }
-  } catch (error) {
-    objectUrls.forEach(url => URL.revokeObjectURL(url))
-    throw error
-  }
+function rotationCandidates(items, hiddenIds = [], group = null) {
+  const hidden = new Set(hiddenIds)
+  const pool = group ? groupWallpapers(items, group, hiddenIds) : (Array.isArray(items) ? items : [])
+  return pool.filter(item =>
+    item && typeof item.id === 'string' && item.dir && item.mediaPath && !hidden.has(item.id))
 }
 
 function isSceneBackendMissing(error) {
@@ -5233,6 +4427,7 @@ async function enableSceneBackend(bridge) {
   try {
     const health = await bridge.api({ path: '/api/plugins/hermes-skins/scene/health' })
     if (!health?.ok) throw new Error('Scene helper or Node.js runtime unavailable')
+    if (health.webwallgl === false) throw new Error('WebWallGL renderer files are missing from the backend package')
     return { ready: true, restartRequired: false }
   } catch (error) {
     if (!isSceneBackendMissing(error)) throw error
@@ -5240,450 +4435,160 @@ async function enableSceneBackend(bridge) {
   }
 }
 
-// ─── Sandboxed Web Wallpaper Bridge ──────────────────────────
-/** Build a sandboxed, self-contained Web Wallpaper document from local files. */
-async function loadWebWallpaper(bridge, mainPath, shimSource = WE_SHIM_JS) {
-  if (!bridge?.readDir || !bridge?.readFileText || !bridge?.readFileDataUrl) {
-    throw new Error('Hermes local file bridge unavailable')
+// ─── Submodule: Wallpaper rotation ───────────────────────────
+const TICK_MS = 15000
+
+/**
+ * User-defined rotation groups. Each group has its own interval, order and
+ * video-end trigger; hidden wallpapers and removed projects never become
+ * candidates.
+ */
+class WallpaperRotation {
+  constructor(store, openScene, controller, backdrop = null) {
+    this.store = store
+    this.openScene = openScene
+    this.controller = controller
+    this.backdrop = backdrop
+    this.lastSwitch = Date.now()
+    this.lastId = store.$config.get().weSelection?.id || null
+    this.lastGroupId = store.$config.get().rotationGroupId || ''
+    this.lastEnabled = false
+    this.switching = false
+    this.timer = typeof document === 'undefined' ? null : setInterval(() => void this.tick(), TICK_MS)
+    this.handleVideoEnd = () => void this.advance(true)
+    if (backdrop) backdrop.onMediaEnd = this.handleVideoEnd
   }
-  const root = mainPath.replace(/[\\/][^\\/]+$/, '')
-  let count = 0
-  const files = new Map()
-  const queue = [{ dir: root, depth: 0 }]
-  while (queue.length && count < 400) {
-    const { dir, depth } = queue.shift()
-    const listing = await bridge.readDir(dir)
-    if (listing?.error) continue
-    for (const entry of listing?.entries || []) {
-      if (count >= 400) break
-      const relative = entry.path.slice(root.length).replace(/^[\\/]+/, '').replace(/\\/g, '/')
-      if (!relative || relative.includes('..') || !entry.path.toLowerCase().startsWith((root + '\\').toLowerCase())) continue
-      if (entry.isDirectory) {
-        if (depth < 4) queue.push({ dir: entry.path, depth: depth + 1 })
-      } else {
-        files.set(relative, entry.path)
-        count++
-      }
-    }
+
+  currentGroup(config) {
+    return activeRotationGroup(config)
   }
-  const readText = async path => {
-    let result = await bridge.readFileText(path)
-    if (result?.truncated && bridge.readPluginSource) result = await bridge.readPluginSource(path)
-    return result?.truncated ? null : result?.text || null
+
+  candidates(config = this.store.$config.get()) {
+    return rotationCandidates(this.store.$weItems.get(), config.hiddenWallpaperIds, this.currentGroup(config))
   }
-  let html = await readText(mainPath)
-  if (!html) throw new Error('Web Wallpaper HTML unavailable')
-  const assets = new Map()
-  const scripts = new Map()
-  const styles = new Map()
-  let dataBytes = 0
-  for (const [relative, absolute] of files) {
-    if (absolute.toLowerCase() === mainPath.toLowerCase()) continue
-    if (/\.(js|mjs|json)$/i.test(relative)) {
-      const text = await readText(absolute)
-      if (text !== null) scripts.set(relative, text)
-    } else if (/\.css$/i.test(relative)) {
-      const text = await readText(absolute)
-      if (text !== null) styles.set(relative, text)
+
+  async advance(force = false) {
+    const config = this.store.$config.get()
+    if (!config.rotationEnabled || this.switching) return false
+    const group = this.currentGroup(config)
+    if (group?.trigger === 'videoEnd' && !force) return false
+    const items = this.candidates(config)
+    if (items.length < 2) return false
+    const currentId = config.weSelection?.id || null
+    let next
+    if (group?.order === 'random') {
+      const pool = items.filter(item => item.id !== currentId)
+      next = pool[Math.floor(Math.random() * pool.length)] || null
     } else {
-      let data
-      try { data = await bridge.readFileDataUrl(absolute) }
-      catch { continue /* A decorative asset can be absent. */ }
-      if (typeof data !== 'string') continue
-      dataBytes += data.length
-      if (dataBytes > 64 * 1024 * 1024) throw new Error('web wallpaper assets exceed 64 MiB')
-      assets.set(relative, data)
+      const index = items.findIndex(item => item.id === currentId)
+      next = items[index < 0 ? 0 : (index + 1) % items.length]
+    }
+    if (!next) return false
+    this.switching = true
+    try {
+      const patch = await resolveWallpaperSelection(next, this.openScene)
+      this.controller.changeConfig(patch)
+      this.lastId = next.id
+      this.lastSwitch = Date.now()
+      return true
+    } catch {
+      // A broken project must not stop the timer. Move the anchor so the same
+      // broken entry cannot pin every later tick to itself.
+      this.lastSwitch = Date.now()
+      return false
+    } finally {
+      this.switching = false
     }
   }
-  const basenameCounts = new Map()
-  for (const key of assets.keys()) {
-    const base = key.split('/').at(-1)
-    basenameCounts.set(base, (basenameCounts.get(base) || 0) + 1)
-  }
-  const replaceAssets = source => {
-    let result = source
-    for (const [relative, data] of assets) {
-      result = result.replaceAll(relative, data)
-      const base = relative.split('/').at(-1)
-      if (basenameCounts.get(base) === 1) result = result.replaceAll(base, data)
+
+  async tick() {
+    const config = this.store.$config.get()
+    const currentId = config.weSelection?.id || null
+    const groupId = config.rotationGroupId || ''
+    if (currentId !== this.lastId || groupId !== this.lastGroupId) {
+      this.lastId = currentId
+      this.lastGroupId = groupId
+      this.lastSwitch = Date.now()
     }
-    return result
+    if (config.rotationEnabled && !this.lastEnabled) this.lastSwitch = Date.now()
+    this.lastEnabled = config.rotationEnabled
+    if (!config.rotationEnabled) return
+    const group = this.currentGroup(config)
+    if (group?.trigger === 'videoEnd') return
+    const items = this.candidates(config)
+    if (items.length < 2) return
+    const interval = Math.max(1, Number(group?.interval) || config.rotationMinutes || 30) * 60000
+    if (Date.now() - this.lastSwitch < interval) return
+    await this.advance(false)
   }
-  for (const [relative, code] of scripts) {
-    const escaped = replaceAssets(code).replace(/<\/script/gi, '<\\/script')
-    const pattern = new RegExp(`<script([^>]*?)src=["'](?:\\./)?${relative.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}["']([^>]*)><\\/script>`, 'gi')
-    html = html.replace(pattern, (_match, before, after) => `<script${before}${after}>${escaped}</script>`)
+
+  destroy() {
+    if (this.timer !== null) clearInterval(this.timer)
+    this.timer = null
+    if (this.backdrop?.onMediaEnd === this.handleVideoEnd) this.backdrop.onMediaEnd = null
   }
-  for (const [relative, css] of styles) {
-    const escaped = replaceAssets(css).replace(/<\/style/gi, '<\\/style')
-    const pattern = new RegExp(`<link([^>]*?)href=["'](?:\\./)?${relative.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}["']([^>]*)>`, 'gi')
-    html = html.replace(pattern, () => `<style>${escaped}</style>`)
-  }
-  html = replaceAssets(html)
-  let defaults = {}
-  try {
-    const projectPath = root + '\\project.json'
-    const project = JSON.parse(await readText(projectPath))
-    for (const [name, property] of Object.entries(project?.general?.properties || {})) {
-      defaults[name] = { value: property?.value }
-    }
-  } catch { /* No editable project properties. */ }
-  const seed = JSON.stringify(defaults).replace(/</g, '\\u003c')
-  const prelude = `<script>window.__dshWeDefaultProps=${seed};</script><script>${shimSource}</script>`
-  return /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, match => match + prelude) : prelude + html
 }
 
-// ─── Submodule: Try-On Banner ─────────────────────────────────
-/**
- * Floating Try-On Banner
- * Shows status when user is currently trying on a skin.
- */
-
-
-
-
-function TryOnBanner({ store, onApply, onExit }) {
-  const t = usePluginI18n('hermes-skins')
-  const tryOnSkin = useValue(store.$tryOnSkin)
-
-  if (!tryOnSkin) return null
-
-  const skinName = tryOnSkin.name || tryOnSkin.nameEn || tryOnSkin.id
-
-  return jsxs('div', {
-    className: 'mb-4 flex items-center justify-between rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 shadow-lg backdrop-blur-md',
-    children: [
-      jsxs('div', {
-        className: 'flex items-center gap-3',
-        children: [
-          jsx('div', {
-            className: 'flex h-8 w-8 items-center justify-center rounded-full bg-amber-500/20 text-amber-500 font-bold',
-            children: '✨'
-          }),
-          jsxs('div', {
-            children: [
-              jsx('div', {
-                className: 'text-sm font-semibold text-foreground',
-                children: t('tryOnBannerTitle', skinName)
-              }),
-              jsx('div', {
-                className: 'text-xs text-muted-foreground',
-                children: t('tryOnBannerDesc')
-              })
-            ]
-          })
-        ]
-      }),
-      jsxs('div', {
-        className: 'flex items-center gap-2',
-        children: [
-          jsx(Button, {
-            size: 'sm',
-            variant: 'secondary',
-            onClick: onExit,
-            children: t('exitTryOnButton')
-          }),
-          jsx(Button, {
-            size: 'sm',
-            onClick: onApply,
-            children: t('applyButton')
-          })
-        ]
-      })
-    ]
-  })
-}
-
-// ─── Submodule: Custom Theme Studio ───────────────────────────
-/**
- * Custom Theme Studio for Hermes Desktop
- * Allows users to craft their own palettes, pick wallpapers, and export/import skin JSON.
- */
-
-
-
-
-
-
-function CustomThemeStudio({ store, onApplySkin }) {
-  const t = usePluginI18n('hermes-skins')
-
-  const [name, setName] = useState('')
-  const [accent, setAccent] = useState('#6366f1')
-  const [background, setBackground] = useState('#0b0f19')
-  const [foreground, setForeground] = useState('#f8fafc')
-  const [card, setCard] = useState('#111827')
-  const [wallpaperUrl, setWallpaperUrl] = useState('')
-  const [importError, setImportError] = useState('')
-  const fileInputRef = useRef(null)
-  const validColor = value => /^#[0-9a-f]{6}$/i.test(value)
-  const valid = name.trim() && [accent, background, foreground, card].every(validColor) &&
-    (!wallpaperUrl || normalizeMediaSource(wallpaperUrl, 'image'))
-  const ink = parseInt(accent.slice(1, 3), 16) * 0.299 +
-    parseInt(accent.slice(3, 5), 16) * 0.587 + parseInt(accent.slice(5, 7), 16) * 0.114 > 150
-    ? '#111827' : '#ffffff'
-
-  function handleSave() {
-    if (!valid) return
-
-    const customSkin = {
-      id: `custom-${Date.now()}`,
-      name: name.trim(),
-      nameEn: name.trim(),
-      author: 'You (Custom)',
-      tagline: 'User-created bespoke palette & backdrop',
-      description: 'Crafted in Hermes Theme Studio.',
-      tags: ['art'],
-      accent,
-      wallpaper: wallpaperUrl || undefined,
-      wallpaperType: 'image',
-      defaultBlur: 4,
-      defaultOcclusion: 30,
-      colors: {
-        background,
-        foreground,
-        card,
-        cardForeground: foreground,
-        muted: background,
-        mutedForeground: '#94a3b8',
-        popover: card,
-        popoverForeground: foreground,
-        primary: accent,
-        primaryForeground: ink,
-        secondary: card,
-        secondaryForeground: foreground,
-        accent,
-        accentForeground: ink,
-        border: '#1f2937',
-        input: card,
-        ring: accent,
-        userBubble: card
-      },
-      darkColors: {
-        background,
-        foreground,
-        card,
-        cardForeground: foreground,
-        muted: background,
-        mutedForeground: '#94a3b8',
-        popover: card,
-        popoverForeground: foreground,
-        primary: accent,
-        primaryForeground: ink,
-        secondary: card,
-        secondaryForeground: foreground,
-        accent,
-        accentForeground: ink,
-        border: '#1f2937',
-        input: card,
-        ring: accent,
-        userBubble: card
-      }
-    }
-
-    store.addCustomSkin(customSkin)
-    onApplySkin(customSkin)
-    setName('')
-  }
-
-  function handleExportJson() {
-    const exportData = {
-      skinManifestVersion: 2,
-      id: name ? name.toLowerCase().replace(/\s+/g, '-') : 'custom-skin',
-      name: name || 'Custom Skin',
-      accent,
-      colors: { background, foreground, card, accent },
-      wallpaper: wallpaperUrl
-    }
-    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${exportData.id}.json`
-    a.click()
-    URL.revokeObjectURL(url)
-  }
-
-  // Import fills the form only; saving still registers the skin explicitly.
-  function handleImportJson(file) {
-    file.text().then(text => {
-      const parsed = JSON.parse(text)
-      const colors = parsed.colors || {}
-      const color = value => {
-        if (typeof value !== 'string' || !validColor(value)) throw new Error('invalid color')
-        return value
-      }
-      const wallpaper = typeof parsed.wallpaper === 'string' ? parsed.wallpaper : ''
-      if (wallpaper && !normalizeMediaSource(wallpaper, 'image')) throw new Error('invalid wallpaper')
-      setName(typeof parsed.name === 'string' ? parsed.name : '')
-      setAccent(color(parsed.accent ?? colors.accent))
-      setBackground(color(colors.background))
-      setForeground(color(colors.foreground))
-      setCard(color(colors.card ?? colors.background))
-      setWallpaperUrl(wallpaper)
-      setImportError('')
-    }).catch(() => setImportError(t('skinJsonInvalid')))
-  }
-
-  return jsxs('div', {
-    className: 'flex flex-col gap-6 max-w-2xl',
-    children: [
-      jsxs('div', {
-        className: 'flex flex-col gap-1',
-        children: [
-          jsx('h2', { className: 'text-lg font-semibold text-foreground', children: t('themeStudioTitle') }),
-          jsx('p', { className: 'text-xs text-muted-foreground', children: t('themeStudioDesc') })
-        ]
-      }),
-      jsxs('div', {
-        'data-hermes-skins-surface': '',
-        className: 'grid grid-cols-1 md:grid-cols-2 gap-4 rounded-xl border border-border/60 bg-card/60 p-4 backdrop-blur-md',
-        children: [
-          jsxs('div', {
-            className: 'flex flex-col gap-2',
-            children: [
-              jsx('label', { className: 'text-xs font-medium text-foreground', children: t('customSkinName') }),
-              jsx(Input, {
-                value: name,
-                onChange: e => setName(e.target.value),
-                placeholder: t('customSkinNamePlaceholder')
-              })
-            ]
-          }),
-          jsxs('div', {
-            className: 'flex flex-col gap-2',
-            children: [
-              jsx('label', { className: 'text-xs font-medium text-foreground', children: t('accentColor') }),
-              jsxs('div', {
-                className: 'flex items-center gap-2',
-                children: [
-                  jsx('input', {
-                    type: 'color',
-                    value: accent,
-                    onChange: e => setAccent(e.target.value),
-                    className: 'h-8 w-10 cursor-pointer rounded border border-border bg-transparent'
-                  }),
-                  jsx(Input, {
-                    value: accent,
-                    onChange: e => setAccent(e.target.value),
-                    className: 'font-mono text-xs'
-                  })
-                ]
-              })
-            ]
-          }),
-          jsxs('div', {
-            className: 'flex flex-col gap-2',
-            children: [
-              jsx('label', { className: 'text-xs font-medium text-foreground', children: t('backgroundColor') }),
-              jsxs('div', {
-                className: 'flex items-center gap-2',
-                children: [
-                  jsx('input', {
-                    type: 'color',
-                    value: background,
-                    onChange: e => setBackground(e.target.value),
-                    className: 'h-8 w-10 cursor-pointer rounded border border-border bg-transparent'
-                  }),
-                  jsx(Input, {
-                    value: background,
-                    onChange: e => setBackground(e.target.value),
-                    className: 'font-mono text-xs'
-                  })
-                ]
-              })
-            ]
-          }),
-          jsxs('div', {
-            className: 'flex flex-col gap-2',
-            children: [
-              jsx('label', { className: 'text-xs font-medium text-foreground', children: t('foregroundColor') }),
-              jsxs('div', {
-                className: 'flex items-center gap-2',
-                children: [
-                  jsx('input', {
-                    type: 'color',
-                    value: foreground,
-                    onChange: e => setForeground(e.target.value),
-                    className: 'h-8 w-10 cursor-pointer rounded border border-border bg-transparent'
-                  }),
-                  jsx(Input, {
-                    value: foreground,
-                    onChange: e => setForeground(e.target.value),
-                    className: 'font-mono text-xs'
-                  })
-                ]
-              })
-            ]
-          }),
-          jsxs('div', {
-            className: 'flex flex-col gap-2 md:col-span-2',
-            children: [
-              jsx('label', { className: 'text-xs font-medium text-foreground', children: t('wallpaperSource') }),
-              jsx(Input, {
-                value: wallpaperUrl,
-                onChange: e => setWallpaperUrl(e.target.value),
-                placeholder: t('wallpaperSourcePlaceholder')
-              })
-            ]
-          })
-        ]
-      }),
-      jsxs('div', {
-        className: 'flex items-center justify-between gap-3',
-        children: [
-          jsxs('div', {
-            className: 'flex items-center gap-2',
-            children: [
-              jsx(Button, {
-                variant: 'outline',
-                onClick: handleExportJson,
-                children: t('exportSkinJson')
-              }),
-              jsx(Button, {
-                variant: 'outline',
-                onClick: () => fileInputRef.current?.click(),
-                children: t('importSkinJson')
-              }),
-              jsx('input', {
-                ref: fileInputRef, type: 'file', accept: '.json,application/json', style: { display: 'none' },
-                onChange: event => {
-                  const file = event.target.files?.[0]
-                  if (file) handleImportJson(file)
-                  event.target.value = ''
-                }
-              }),
-              importError && jsx('span', { className: 'text-xs text-destructive', children: importError })
-            ]
-          }),
-          jsx(Button, {
-            onClick: handleSave,
-            disabled: !valid,
-            children: t('saveCustomSkin')
-          })
-        ]
-      })
-    ]
-  })
+function nextRotationGroupId() {
+  return `grp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 }
 
 // ─── Submodule: Wallpaper Engine Panel ───────────────────────
+const { WallpaperEnginePanel } = (() => {
 const PAGE_SIZE = 12
+const isZh = () => String(typeof document !== 'undefined'
+  ? (document.documentElement?.lang || navigator.language || '')
+  : (typeof navigator !== 'undefined' ? navigator.language : '')).toLowerCase().startsWith('zh')
+const text = (zh, en) => isZh() ? zh : en
 
-function WallpaperEnginePanel({ store, controller, preview, prepareScene }) {
+function ratingOf(item) {
+  const value = String(item?.contentrating || '').toLowerCase()
+  if (value.includes('mature')) return 'mature'
+  if (value.includes('pg13') || value.includes('pg-13')) return 'pg13'
+  if (value.includes('everyone')) return 'everyone'
+  return 'unrated'
+}
+
+function orientationOf(item) {
+  const width = Number(item?.width) || 0
+  const height = Number(item?.height) || 0
+  if (!width || !height) return 'all'
+  return width > height ? 'landscape' : width < height ? 'portrait' : 'all'
+}
+
+function Chips({ values, selected, onToggle, label }) {
+  return jsxs('div', { className: 'flex flex-wrap items-center gap-1.5', 'aria-label': label, children: values.map(value => {
+    const active = selected.includes(value)
+    return jsx('button', {
+      type: 'button',
+      'aria-pressed': active,
+      onClick: () => onToggle(value),
+      className: `rounded-full px-2.5 py-1 text-[11px] transition ${active
+        ? 'bg-primary text-primary-foreground'
+        : 'border border-border bg-background/60 text-muted-foreground hover:text-foreground'}`,
+      children: value
+    }, value)
+  }) })
+}
+
+function WallpaperEnginePanel({
+  store, controller, openScene, loadUploads, importUploads, importUrl, importBing, compact = false
+}) {
   const t = usePluginI18n('hermes-skins')
   const config = useValue(store.$config)
   const [items, setItems] = useState([])
   const [libraries, setLibraries] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [filter, setFilter] = useState('all')
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(0)
+  const [showHidden, setShowHidden] = useState(false)
   const [previews, setPreviews] = useState({})
   const [importingId, setImportingId] = useState(null)
   const [backendMissing, setBackendMissing] = useState(false)
   const [recoveringBackend, setRecoveringBackend] = useState(false)
+  const [urlDraft, setUrlDraft] = useState('')
+  const [busyAction, setBusyAction] = useState('')
   const pendingScene = useRef(null)
   const scanRevision = useRef(0)
   const previewCache = useRef(new Map())
@@ -5695,12 +4600,21 @@ function WallpaperEnginePanel({ store, controller, preview, prepareScene }) {
     setLoading(true)
     setError('')
     try {
-      const result = await scanWallpaperEngine(bridge, config.weRoots)
+      const [scan, uploads] = await Promise.all([
+        scanWallpaperEngine(bridge, config.weRoots).catch(cause => ({
+          items: [], libraries: [], error: String(cause?.message || cause)
+        })),
+        typeof loadUploads === 'function'
+          ? loadUploads().catch(() => ({ items: [] }))
+          : Promise.resolve({ items: [] })
+      ])
       if (revision !== scanRevision.current) return
-      setItems(result.items)
-      setLibraries(result.libraries)
+      const merged = [...(uploads?.items || []), ...(scan.items || [])]
+      setItems(merged)
+      store.setWeItems?.(merged)
+      setLibraries(scan.libraries || [])
       setPage(0)
-      if (result.error) setError(result.error)
+      if (scan.error) setError(scan.error)
     } catch (cause) {
       if (revision === scanRevision.current) setError(String(cause?.message || cause))
     } finally {
@@ -5713,54 +4627,66 @@ function WallpaperEnginePanel({ store, controller, preview, prepareScene }) {
     return () => { scanRevision.current += 1 }
   }, [rootsKey])
 
-  const filtered = items.filter(item => (filter === 'all' || item.kind === filter) &&
-    (!query || item.title.toLocaleLowerCase().includes(query.toLocaleLowerCase())))
+  const hiddenIds = new Set(config.hiddenWallpaperIds || [])
+  const typeFilter = Array.isArray(config.typeFilter) ? config.typeFilter : WALLPAPER_TYPES
+  const ratingFilter = Array.isArray(config.contentRatingFilter) ? config.contentRatingFilter : ['everyone']
+  const hiddenCount = items.filter(item => hiddenIds.has(item.id)).length
+  const filtered = items.filter(item => {
+    if (showHidden !== hiddenIds.has(item.id)) return false
+    if (!typeFilter.includes(item.kind)) return false
+    const rating = ratingOf(item)
+    if (item.contentrating && !ratingFilter.includes(rating)) return false
+    const orientationFilter = config.orientationFilter || 'all'
+    if (orientationFilter !== 'all' && orientationOf(item) !== 'all' &&
+      orientationOf(item) !== orientationFilter) return false
+    if (config.folderFilter !== 'all' && item.source !== config.folderFilter) return false
+    return !query || item.title.toLocaleLowerCase().includes(query.toLocaleLowerCase())
+  })
   const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
   const visible = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
-  const visiblePaths = visible.map(item => item.previewPath).join('|')
+  const visiblePaths = visible.map(item => item.previewPath || item.mediaPath).join('|')
 
   useEffect(() => {
     if (!bridge?.readFileDataUrl) return
     let cancelled = false
     const fetchPreviews = async () => {
       const loaded = {}
-      // Only the current page owns React image state. Keep a small LRU across
-      // pages instead of retaining every visited full-size base64 thumbnail.
       const publish = () => { if (!cancelled) setPreviews({ ...loaded }) }
       for (const item of visible) {
-        const cached = previewCache.current.get(item.previewPath)
+        const path = item.previewPath || item.mediaPath
+        const cached = previewCache.current.get(path)
         if (cached) {
-          loaded[item.previewPath] = cached
-          previewCache.current.delete(item.previewPath)
-          previewCache.current.set(item.previewPath, cached)
+          loaded[path] = cached
+          previewCache.current.delete(path)
+          previewCache.current.set(path, cached)
         }
       }
       publish()
       for (let start = 0; start < visible.length && !cancelled; start += 4) {
         await Promise.all(visible.slice(start, start + 4).map(async item => {
-          if (loaded[item.previewPath] || !/\.(png|jpe?g|webp|gif|bmp)$/i.test(item.previewPath || '')) return
+          const path = item.previewPath || item.mediaPath
+          if (loaded[path] || !/\.(png|jpe?g|webp|gif|bmp)$/i.test(path || '')) return
           try {
             if (window.location?.protocol === 'file:') {
-              const url = normalizeMediaSource(item.previewPath)
+              const url = normalizeMediaSource(path)
               if (url) {
                 const response = await fetch(url, { method: 'HEAD' })
-                if (cancelled) return
                 if (response.ok) {
-                  loaded[item.previewPath] = url
-                  previewCache.current.set(item.previewPath, url)
+                  loaded[path] = url
+                  previewCache.current.set(path, url)
                   return
                 }
               }
             }
-          } catch { /* Restricted hosts retain the file-data bridge below. */ }
+          } catch { /* Fall through to the local bridge. */ }
           if (cancelled) return
           try {
-            const data = await bridge.readFileDataUrl(item.previewPath)
+            const data = await bridge.readFileDataUrl(path)
             if (!cancelled && typeof data === 'string' && data.startsWith('data:image/')) {
-              loaded[item.previewPath] = data
-              previewCache.current.set(item.previewPath, data)
+              loaded[path] = data
+              previewCache.current.set(path, data)
             }
-          } catch { /* A missing thumbnail must not block the inventory. */ }
+          } catch { /* Keep the inventory usable without a thumbnail. */ }
         }))
         let bytes = 0
         for (const data of previewCache.current.values()) bytes += data.length * 2
@@ -5781,11 +4707,67 @@ function WallpaperEnginePanel({ store, controller, preview, prepareScene }) {
       setError(t('weBridgeUnavailable'))
       return
     }
-    const paths = await bridge.selectPaths({ directories: true, multiple: false,
-      defaultPath: libraries[0] || config.weRoots[0], title: t('weChooseFolder') })
+    const paths = await bridge.selectPaths({
+      directories: true, multiple: false,
+      defaultPath: libraries[0] || config.weRoots[0], title: t('weChooseFolder')
+    })
     const selected = paths?.[0]
     if (selected && !config.weRoots.includes(selected)) {
       controller.changeConfig({ weRoots: [...config.weRoots, selected] })
+    }
+  }
+
+  async function addFiles() {
+    if (!bridge?.selectPaths || typeof importUploads !== 'function') {
+      setError(t('weBridgeUnavailable'))
+      return
+    }
+    setBusyAction('files')
+    setError('')
+    try {
+      const paths = await bridge.selectPaths({
+        directories: false, multiple: true,
+        title: text('选择图片或视频', 'Choose images or videos')
+      })
+      if (!paths?.length) return
+      const result = await importUploads(paths)
+      if (result?.rejected?.length) setError(result.rejected.map(row => row.error).join(' · '))
+      await refresh()
+    } catch (cause) {
+      setError(String(cause?.message || cause))
+    } finally {
+      setBusyAction('')
+    }
+  }
+
+  async function addUrl() {
+    if (!urlDraft.trim() || typeof importUrl !== 'function') return
+    setBusyAction('url')
+    setError('')
+    try {
+      const result = await importUrl(urlDraft.trim())
+      if (!result?.ok) throw new Error(result?.error || 'URL import failed')
+      setUrlDraft('')
+      await refresh()
+    } catch (cause) {
+      setError(String(cause?.message || cause))
+    } finally {
+      setBusyAction('')
+    }
+  }
+
+  async function addBing() {
+    if (typeof importBing !== 'function') return
+    setBusyAction('bing')
+    setError('')
+    try {
+      const result = await importBing()
+      if (!result?.ok) throw new Error(result?.error || 'Bing download failed')
+      await refresh()
+    } catch (cause) {
+      setError(String(cause?.message || cause))
+    } finally {
+      setBusyAction('')
     }
   }
 
@@ -5794,50 +4776,18 @@ function WallpaperEnginePanel({ store, controller, preview, prepareScene }) {
     setBackendMissing(false)
     setImportingId(item.id)
     try {
-      let source = wallpaperMediaUrl(item.mediaPath, item.mediaType)
-      let type = item.mediaType
-      let framePath = null
-      let staticFallback = item.staticFallback
-      if (item.kind === 'scene') {
-        // Re-selecting the already-prepared scene must not depend on the
-        // gateway: its unpacked manifest and preview frame are already on
-        // disk and referenced by the current config.
-        if (config.wallpaperType === 'scene' &&
-            config.weSelection?.id === item.id && config.wallpaperSource &&
-            !config.wallpaperSource.startsWith('data:')) {
-          controller.changeConfig({ wallpaperEnabled: true })
-          return
-        }
-        if (!prepareScene) throw new Error(t('weSceneBackendUnavailable'))
-        const result = await prepareScene(item.dir)
-        if (!result?.ok) throw new Error(result?.error || t('weSceneBackendUnavailable'))
-        framePath = result.framePath || null
-        if (result.manifest && result.manifestPath) {
-          source = result.manifestPath
-          type = 'scene'
-          staticFallback = false
-        } else if (result.videoPath) {
-          source = wallpaperMediaUrl(result.videoPath, 'video')
-          type = 'video'
-          staticFallback = false
-        } else if (framePath) {
-          source = framePath
-          type = 'image'
-          staticFallback = true
-        } else {
-          throw new Error(t('weSceneUnsupported'))
-        }
+      if (hiddenIds.has(item.id)) {
+        const next = new Set(hiddenIds)
+        next.delete(item.id)
+        controller.changeConfig({ hiddenWallpaperIds: [...next] })
       }
-      controller.changeConfig({
-        wallpaperEnabled: true,
-        wallpaperType: type,
-        wallpaperSource: source,
-        weSelection: { id: item.id, title: item.title, kind: item.kind, staticFallback,
-          framePath, previewPath: item.previewPath }
-      })
+      if ((item.kind === 'scene' || item.kind === 'web') &&
+          config.weSelection?.id === item.id && config.weSelection?.dir === item.dir) {
+        controller.changeConfig({ wallpaperEnabled: true })
+        return
+      }
+      controller.changeConfig(await resolveWallpaperSelection(item, openScene))
     } catch (cause) {
-      // A blocked backend surfaces as an ipc 404 "Plugin not found" — map it
-      // to the recovery action instead of the raw electron error text.
       const message = String(cause?.message || cause)
       const missing = isSceneBackendMissing(cause)
       pendingScene.current = missing ? item : null
@@ -5846,6 +4796,13 @@ function WallpaperEnginePanel({ store, controller, preview, prepareScene }) {
     } finally {
       setImportingId(null)
     }
+  }
+
+  function toggleHidden(item, hidden) {
+    const next = new Set(config.hiddenWallpaperIds || [])
+    if (hidden) next.add(item.id)
+    else next.delete(item.id)
+    controller.changeConfig({ hiddenWallpaperIds: [...next] })
   }
 
   async function recoverBackend() {
@@ -5865,397 +4822,1942 @@ function WallpaperEnginePanel({ store, controller, preview, prepareScene }) {
   }
 
   const kindLabel = kind => t({ video: 'weTypeVideo', scene: 'weTypeScene', image: 'weTypeImage', web: 'weTypeWeb' }[kind] || 'weTypeOther')
-  return jsxs('section', { 'data-hermes-skins-surface': '', className: 'rounded-xl border border-border bg-card p-5', children: [
-    jsxs('div', { className: 'flex flex-wrap items-start justify-between gap-3', children: [
-      jsxs('div', { className: 'space-y-1', children: [
-        jsx('h2', { className: 'font-semibold text-foreground', children: t('weTitle') }),
-        jsx('p', { className: 'text-xs text-muted-foreground', children: t('weDescription') })
-      ] }),
-      jsxs('div', { className: 'flex gap-2', children: [
-        jsx(Button, { size: 'sm', variant: 'outline', onClick: chooseFolder, children: t('weChooseFolder') }),
-        jsx(Button, { size: 'sm', variant: 'outline', onClick: refresh, disabled: loading,
-          children: loading ? t('weScanning') : t('weRefresh') })
-      ] })
-    ] }),
-    jsx('p', { className: 'mt-3 text-xs text-muted-foreground', children: loading ? t('weScanning') : t('weFound', items.length) }),
-    error && jsx('p', { className: 'mt-2 text-xs text-destructive', children: error }),
-    backendMissing && bridge?.api && jsx(Button, { size: 'sm', variant: 'outline',
-      className: 'mt-2', disabled: recoveringBackend, onClick: () => void recoverBackend(),
-      children: recoveringBackend ? t('weSceneBackendEnabling') : t('weSceneBackendEnable') }),
-    !loading && config.weSelection && items.length > 0 && !items.some(item => item.id === config.weSelection.id) &&
-      jsx('p', { className: 'mt-2 text-xs text-amber-600', children: t('weMissing') }),
-    jsxs('div', { className: 'mt-4 flex flex-wrap items-center gap-2', children: [
-      jsx(Input, { value: query, onChange: event => { setQuery(event.target.value); setPage(0) },
-        placeholder: t('weSearch'), className: 'max-w-64', 'aria-label': t('weSearch') }),
-      ['all', 'video', 'scene', 'image', 'web'].map(value => jsx('button', {
-        key: value, type: 'button', 'aria-pressed': filter === value,
-        onClick: () => { setFilter(value); setPage(0) },
-        className: `rounded-full px-2.5 py-1 text-xs ${filter === value ? 'bg-primary text-primary-foreground' : 'bg-background text-foreground'}`,
-        children: value === 'all' ? t('tagsAll') : kindLabel(value)
-      }))
-    ] }),
-    !loading && items.length === 0 && jsx('p', { className: 'mt-4 text-sm text-muted-foreground', children: t('weEmpty') }),
-    jsxs('div', { className: 'mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3', children: visible.map(item => {
-      const selected = config.weSelection?.id === item.id
-      return jsxs('article', { key: item.id, 'data-hermes-skins-surface': '', className: `overflow-hidden rounded-lg border bg-background ${selected ? 'border-primary' : 'border-border'}`, children: [
-        previews[item.previewPath]
-          ? jsx('img', { src: previews[item.previewPath], alt: '', loading: 'lazy', decoding: 'async', className: 'h-36 w-full object-cover' })
-          : jsx('div', { className: 'h-36 bg-muted/40' }),
-        jsxs('div', { className: 'space-y-2 p-3', children: [
-          jsx('h3', { className: 'line-clamp-2 min-h-8 text-sm font-medium text-foreground', title: item.title, children: item.title }),
-          jsx('p', { className: 'text-xs text-muted-foreground', children: item.kind === 'scene'
-            ? `${kindLabel(item.kind)} · ${t('weSceneLive')}`
-            : item.staticFallback ? `${kindLabel(item.kind)} · ${t('weStaticFallback')}` : kindLabel(item.kind) }),
-          jsx(Button, { size: 'sm', className: 'w-full', disabled: Boolean(preview) || Boolean(importingId) || recoveringBackend,
-            variant: selected ? 'secondary' : 'default', onClick: () => void useWallpaper(item),
-            children: importingId === item.id ? t('wePreparing') : selected ? t('weSelected') : t('weUse') })
+  const toggleArray = (key, value) => {
+    const current = Array.isArray(config[key])
+      ? config[key]
+      : key === 'typeFilter' ? WALLPAPER_TYPES : ['everyone']
+    const next = current.includes(value) ? current.filter(item => item !== value) : [...current, value]
+    if (next.length) controller.changeConfig({ [key]: next })
+  }
+  const cardHeight = config.pickerLayout === 'classic' ? 'aspect-video' : 'h-36'
+
+  return jsxs('section', {
+    'data-hermes-skins-surface': '',
+    className: `rounded-xl border border-border bg-card ${compact ? 'p-3' : 'p-5'}`,
+    children: [
+      jsxs('div', { className: 'flex flex-wrap items-start justify-between gap-3', children: [
+        jsxs('div', { className: 'space-y-1', children: [
+          jsx('h2', { className: 'font-semibold text-foreground', children: t('weTitle') }),
+          jsx('p', { className: 'text-xs text-muted-foreground', children: t('weDescription') })
+        ] }),
+        jsxs('div', { className: 'flex flex-wrap gap-2', children: [
+          jsx(Button, { size: 'sm', variant: 'outline', onClick: chooseFolder, children: t('weChooseFolder') }),
+          jsx(Button, { size: 'sm', variant: 'outline', onClick: () => void addFiles(),
+            disabled: Boolean(busyAction), children: busyAction === 'files' ? '…' : text('添加文件', 'Add files') }),
+          jsx(Button, { size: 'sm', variant: 'outline', onClick: refresh, disabled: loading,
+            children: loading ? t('weScanning') : t('weRefresh') })
         ] })
-      ] })
-    }) }),
-    pages > 1 && jsxs('div', { className: 'mt-4 flex items-center justify-end gap-2 text-xs text-muted-foreground', children: [
-      jsx(Button, { size: 'sm', variant: 'outline', disabled: page === 0,
-        onClick: () => setPage(page - 1), children: '←' }),
-      jsx('span', { children: `${page + 1} / ${pages}` }),
-      jsx(Button, { size: 'sm', variant: 'outline', disabled: page + 1 >= pages,
-        onClick: () => setPage(page + 1), children: '→' })
-    ] })
+      ] }),
+      jsxs('div', { className: 'mt-3 flex flex-wrap gap-2', children: [
+        jsx(Input, {
+          value: urlDraft, onChange: event => setUrlDraft(event.target.value),
+          onKeyDown: event => { if (event.key === 'Enter') void addUrl() },
+          placeholder: text('粘贴图片 / 视频 URL', 'Paste an image or video URL'),
+          className: 'min-w-52 flex-1'
+        }),
+        jsx(Button, { size: 'sm', variant: 'outline', disabled: Boolean(busyAction) || !urlDraft.trim(),
+          onClick: () => void addUrl(), children: busyAction === 'url' ? '…' : text('导入 URL', 'Import URL') }),
+        jsx(Button, { size: 'sm', variant: 'outline', disabled: Boolean(busyAction),
+          onClick: () => void addBing(), children: busyAction === 'bing' ? '…' : 'Bing 每日一图' })
+      ] }),
+      jsx('p', { className: 'mt-3 text-xs text-muted-foreground',
+        children: loading ? t('weScanning') : t('weFound', items.length) }),
+      error && jsx('p', { className: 'mt-2 text-xs text-destructive', children: error }),
+      backendMissing && bridge?.api && jsx(Button, {
+        size: 'sm', variant: 'outline', className: 'mt-2',
+        disabled: recoveringBackend, onClick: () => void recoverBackend(),
+        children: recoveringBackend ? t('weSceneBackendEnabling') : t('weSceneBackendEnable')
+      }),
+      !loading && config.weSelection && items.length > 0 &&
+        !items.some(item => item.id === config.weSelection.id) &&
+        jsx('p', { className: 'mt-2 text-xs text-amber-600', children: t('weMissing') }),
+      jsxs('div', { className: 'mt-4 flex flex-col gap-2', children: [
+        jsxs('div', { className: 'flex flex-wrap items-center gap-2', children: [
+          jsx(Input, {
+            value: query, onChange: event => { setQuery(event.target.value); setPage(0) },
+            placeholder: t('weSearch'), className: 'max-w-64', 'aria-label': t('weSearch')
+          }),
+          jsxs('select', {
+            value: config.orientationFilter,
+            onChange: event => controller.changeConfig({ orientationFilter: event.target.value }),
+            className: 'rounded-md border border-border bg-background px-2 py-1.5 text-xs',
+            'aria-label': text('方向筛选', 'Orientation filter'),
+            children: ORIENTATION_FILTERS.map(value => jsx('option', { value,
+              children: value === 'all' ? text('全部方向', 'All orientations')
+                : value === 'landscape' ? text('横屏', 'Landscape') : text('竖屏', 'Portrait')
+            }, value))
+          }),
+          jsx(Button, {
+            size: 'sm', variant: 'outline',
+            onClick: () => { setShowHidden(value => !value); setPage(0) },
+            children: showHidden ? t('weShowVisible', hiddenCount) : t('weShowHidden', hiddenCount)
+          })
+        ] }),
+        jsxs('div', { className: 'flex flex-wrap items-center gap-2', children: [
+          jsx('span', { className: 'text-[11px] text-muted-foreground', children: text('类型', 'Type') }),
+          jsx(Chips, {
+            values: WALLPAPER_TYPES, selected: config.typeFilter,
+            onToggle: value => toggleArray('typeFilter', value), label: text('类型筛选', 'Type filter')
+          })
+        ] }),
+        jsxs('div', { className: 'flex flex-wrap items-center gap-2', children: [
+          jsx('span', { className: 'text-[11px] text-muted-foreground', children: text('分级', 'Rating') }),
+          jsx(Chips, {
+            values: CONTENT_RATINGS, selected: config.contentRatingFilter,
+            onToggle: value => toggleArray('contentRatingFilter', value), label: text('内容分级筛选', 'Rating filter')
+          })
+        ] })
+      ] }),
+      !loading && items.length === 0 && jsx('p', { className: 'mt-4 text-sm text-muted-foreground', children: t('weEmpty') }),
+      jsx('div', { className: 'mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3', children: visible.map(item => {
+        const selected = config.weSelection?.id === item.id
+        const hidden = hiddenIds.has(item.id)
+        const path = item.previewPath || item.mediaPath
+        const preview = previews[path]
+        return jsxs('article', {
+          key: item.id,
+          'data-hermes-skins-surface': '',
+          className: `overflow-hidden rounded-lg border bg-background ${selected ? 'border-primary' : 'border-border'}`,
+          children: [
+            preview
+              ? jsx('img', { src: preview, alt: '', loading: 'lazy', decoding: 'async',
+                  className: `${cardHeight} w-full object-cover` })
+              : item.mediaType === 'video' && normalizeMediaSource(item.mediaPath, 'video')
+                ? jsx('video', {
+                    src: normalizeMediaSource(item.mediaPath, 'video'), muted: true,
+                    preload: 'metadata', playsInline: true,
+                    className: `${cardHeight} w-full object-cover`
+                  })
+                : jsx('div', { className: `${cardHeight} bg-muted/40` }),
+            jsxs('div', { className: 'space-y-2 p-3', children: [
+              jsx('h3', { className: 'line-clamp-2 min-h-8 text-sm font-medium text-foreground', title: item.title, children: item.title }),
+              jsxs('p', { className: 'text-xs text-muted-foreground', children: [
+                kindLabel(item.kind),
+                item.source ? ` · ${item.source}` : '',
+                item.contentrating ? ` · ${item.contentrating}` : '',
+                item.staticFallback ? ` · ${t('weStaticFallback')}` : ''
+              ].join('') }),
+              hidden
+                ? jsxs('div', { className: 'flex gap-2', children: [
+                    jsx(Button, { size: 'sm', className: 'flex-1', variant: 'outline',
+                      onClick: () => toggleHidden(item, false), children: t('weRestore') }),
+                    jsx(Button, { size: 'sm', className: 'flex-1',
+                      disabled: Boolean(importingId) || recoveringBackend,
+                      onClick: () => void useWallpaper(item),
+                      children: importingId === item.id ? t('wePreparing') : t('weRestoreAndUse') })
+                  ] })
+                : jsxs('div', { className: 'flex gap-2', children: [
+                    jsx(Button, { size: 'sm', className: 'flex-1',
+                      disabled: Boolean(importingId) || recoveringBackend,
+                      variant: selected ? 'secondary' : 'default',
+                      onClick: () => void useWallpaper(item),
+                      children: importingId === item.id ? t('wePreparing') : selected ? t('weSelected') : t('weUse') }),
+                    jsx(Button, { size: 'sm', variant: 'outline',
+                      onClick: () => toggleHidden(item, true), children: t('weHide') })
+                  ] })
+            ] })
+          ]
+        })
+      }) }),
+      pages > 1 && jsxs('div', {
+        className: 'mt-4 flex items-center justify-end gap-2 text-xs text-muted-foreground',
+        children: [
+          jsx(Button, { size: 'sm', variant: 'outline', disabled: page === 0,
+            onClick: () => setPage(page - 1), children: '←' }),
+          jsx('span', { children: `${page + 1} / ${pages}` }),
+          jsx(Button, { size: 'sm', variant: 'outline', disabled: page + 1 >= pages,
+            onClick: () => setPage(page + 1), children: '→' })
+        ]
+      })
+    ]
+  })
+}
+return { WallpaperEnginePanel }
+})()
+
+// ─── Submodule: Rotation group editor ────────────────────────
+const { RotationGroupEditor } = (() => {
+const INTERVALS = [1, 5, 10, 30, 60, 120]
+const PICTURE_INTERVALS = [0, 5, 10, 15, 30, 60, 180, 300]
+const isZh = () => String(typeof document !== 'undefined'
+  ? (document.documentElement?.lang || navigator.language || '')
+  : (typeof navigator !== 'undefined' ? navigator.language : '')).toLowerCase().startsWith('zh')
+const text = (zh, en) => isZh() ? zh : en
+
+function Select({ value, onChange, children, label, disabled = false }) {
+  return jsxs('label', { className: 'flex flex-col gap-1.5 text-xs text-foreground', children: [
+    label && jsx('span', { className: 'text-muted-foreground', children: label }),
+    jsx('select', {
+      value, disabled, onChange: event => onChange(event.target.value),
+      className: 'rounded-md border border-border bg-background px-2.5 py-1.5 text-xs disabled:opacity-50',
+      children
+    })
   ] })
 }
 
-// ─── Submodule: Skin Center Page ──────────────────────────────
-/** Browse position per tab plus the active tab itself, kept outside the
- *  component so leaving /skins for a conversation and coming back resumes
- *  where the user was. The page unmounts on route switches and the host gives
- *  no scroll restoration, so the memory has to outlive it (plugin lifetime). */
-const viewMemory = { tab: 'gallery', gallery: 0, wallpaper: 0, studio: 0 }
-
-function SkinCenterPage({ store, controller, prepareScene }) {
+function RotationGroupEditor({ store, controller }) {
   const t = usePluginI18n('hermes-skins')
-  const theme = useTheme()
   const config = useValue(store.$config)
-  const preview = useValue(store.$tryOnSkin)
-  const [tab, setTabState] = useState(viewMemory.tab)
-  const setTab = id => { viewMemory.tab = id; setTabState(id) }
-  const [tag, setTag] = useState('all')
-  const [sourceDraft, setSourceDraft] = useState(config.wallpaperSource)
-  const scrollRef = useRef(null)
-  const skins = [...BUILTIN_SKINS, ...config.customSkins]
-  const active = preview || controller.findSkin(theme.themeName)
-  const customSourceValid = !sourceDraft || Boolean(normalizeMediaSource(sourceDraft, config.wallpaperType))
+  const items = useValue(store.$weItems)
+  const [draft, setDraft] = useState(null)
+  const [armedDelete, setArmedDelete] = useState(false)
+  const [query, setQuery] = useState('')
+  const group = activeRotationGroup(config)
+  const candidates = groupWallpapers(items, group, config.hiddenWallpaperIds)
+  const selectedIds = new Set((draft || group)?.wallpaperIds || [])
+  const filteredItems = items
+    .filter(item => !config.hiddenWallpaperIds.includes(item.id))
+    .filter(item => !query || item.title.toLowerCase().includes(query.toLowerCase()))
+    .slice(0, 250)
 
-  useEffect(() => controller.sync(theme.themeName, theme.renderedMode),
-    [controller, theme.themeName, theme.renderedMode])
+  const beginCreate = () => {
+    const draftGroup = {
+      id: nextRotationGroupId(),
+      name: text(`轮播列表 ${config.rotationGroups.length + 1}`, `Rotation list ${config.rotationGroups.length + 1}`),
+      interval: config.rotationMinutes || 30,
+      order: 'sequence',
+      trigger: 'interval',
+      wallpaperIds: []
+    }
+    setDraft(draftGroup)
+    setArmedDelete(false)
+  }
+
+  const beginEdit = () => {
+    if (!group) return
+    setDraft(JSON.parse(JSON.stringify(group)))
+    setArmedDelete(false)
+  }
+
+  const updateDraft = patch => {
+    setDraft(current => current ? { ...current, ...patch } : current)
+  }
+
+  const toggleMember = id => {
+    if (!draft) return
+    const next = new Set(draft.wallpaperIds)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    updateDraft({ wallpaperIds: [...next] })
+  }
+
+  const save = () => {
+    if (!draft) return
+    const cleaned = normalizeRotationGroup(draft)
+    if (!cleaned) return
+    const exists = config.rotationGroups.some(item => item.id === cleaned.id)
+    const rotationGroups = exists
+      ? config.rotationGroups.map(item => item.id === cleaned.id ? cleaned : item)
+      : [...config.rotationGroups, cleaned]
+    controller.changeConfig({
+      rotationGroups,
+      rotationGroupId: cleaned.id,
+      rotationSeeded: true,
+      rotationMinutes: cleaned.interval
+    })
+    setDraft(null)
+  }
+
+  const remove = () => {
+    if (!group) return
+    if (!armedDelete) {
+      setArmedDelete(true)
+      return
+    }
+    const rotationGroups = config.rotationGroups.filter(item => item.id !== group.id)
+    const fallback = rotationGroups.find(item => groupWallpapers(items, item, config.hiddenWallpaperIds).length >= 2)
+    controller.changeConfig({
+      rotationGroups,
+      rotationGroupId: fallback?.id || '',
+      rotationEnabled: fallback ? config.rotationEnabled : false
+    })
+    setArmedDelete(false)
+  }
+
+  const enableRotation = checked => {
+    if (checked && !group) {
+      const first = config.rotationGroups.find(item =>
+        groupWallpapers(items, item, config.hiddenWallpaperIds).length >= 2)
+      if (first) controller.changeConfig({ rotationGroupId: first.id, rotationEnabled: true })
+      return
+    }
+    controller.changeConfig({ rotationEnabled: checked })
+  }
+
+  return jsxs('div', { className: 'flex flex-col gap-3 rounded-lg border border-border bg-background/40 p-3', children: [
+    jsxs('div', { className: 'flex flex-wrap items-end gap-2', children: [
+      jsxs('label', { className: 'flex min-w-52 flex-1 flex-col gap-1.5 text-xs text-foreground', children: [
+        jsx('span', { className: 'text-muted-foreground', children: text('轮播列表', 'Rotation list') }),
+        jsxs('select', {
+          value: config.rotationGroupId,
+          onChange: event => {
+            setDraft(null)
+            setArmedDelete(false)
+            controller.changeConfig({ rotationGroupId: event.target.value })
+          },
+          disabled: config.rotationGroups.length === 0,
+          className: 'rounded-md border border-border bg-background px-2.5 py-1.5 text-xs disabled:opacity-50',
+          children: [
+            jsx('option', { value: '', children: config.rotationGroups.length
+              ? text('— 选择轮播列表 —', '— Choose a rotation list —')
+              : text('— 暂无轮播列表 —', '— No rotation lists —') }),
+            ...config.rotationGroups.map(item => jsx('option', {
+              value: item.id,
+              children: text(
+                `${item.name}（${groupWallpapers(items, item, config.hiddenWallpaperIds).length} 可播放 · ${item.interval} 分钟）`,
+                `${item.name} (${groupWallpapers(items, item, config.hiddenWallpaperIds).length} playable · ${item.interval} min)`
+              )
+            }, item.id))
+          ]
+        })
+      ] }),
+      jsx(Button, { size: 'sm', variant: 'outline', onClick: beginCreate, children: text('新建', 'New') }),
+      jsx(Button, { size: 'sm', variant: 'outline', onClick: beginEdit, disabled: !group,
+        children: text('编辑', 'Edit') }),
+      jsx(Button, {
+        size: 'sm', variant: armedDelete ? 'destructive' : 'outline',
+        onClick: remove, disabled: !group,
+        children: armedDelete ? text('确认删除', 'Confirm delete') : text('删除', 'Delete')
+      })
+    ] }),
+    armedDelete && jsx('p', { className: 'text-[11px] text-destructive',
+      children: text(`删除轮播列表「${group?.name || ''}」？此操作不可恢复。`, `Delete “${group?.name || ''}”? This cannot be undone.`) }),
+    draft && jsxs('div', { className: 'flex flex-col gap-3 rounded-lg border border-border bg-card p-3', children: [
+      jsxs('div', { className: 'grid gap-3 sm:grid-cols-2 xl:grid-cols-4', children: [
+        jsxs('label', { className: 'flex flex-col gap-1.5 text-xs text-foreground', children: [
+          jsx('span', { className: 'text-muted-foreground', children: text('名称', 'Name') }),
+          jsx(Input, { value: draft.name, onChange: event => updateDraft({ name: event.target.value }) })
+        ] }),
+        jsx(Select, {
+          label: text('间隔', 'Interval'),
+          value: String(draft.interval),
+          onChange: value => updateDraft({ interval: Number(value) }),
+          disabled: draft.trigger === 'videoEnd',
+          children: INTERVALS.map(minutes => jsx('option', { value: minutes,
+            children: text(`${minutes} 分钟`, `${minutes} min`) }, minutes))
+        }),
+        jsx(Select, {
+          label: text('推进', 'Advance'),
+          value: draft.trigger,
+          onChange: value => updateDraft({ trigger: value }),
+          children: [
+            jsx('option', { value: 'interval', children: text('按间隔', 'On interval') }),
+            jsx('option', { value: 'videoEnd', children: text('视频播完就换', 'When video ends') })
+          ]
+        }),
+        jsx(Select, {
+          label: text('顺序', 'Order'),
+          value: draft.order,
+          onChange: value => updateDraft({ order: value }),
+          children: [
+            jsx('option', { value: 'sequence', children: text('顺序', 'Sequence') }),
+            jsx('option', { value: 'random', children: text('随机', 'Random') })
+          ]
+        })
+      ] }),
+      jsxs('div', { className: 'flex flex-wrap items-center gap-2', children: [
+        jsx(Input, {
+          value: query, onChange: event => setQuery(event.target.value),
+          placeholder: text('搜索要加入的壁纸', 'Search wallpapers to add'),
+          className: 'max-w-64'
+        }),
+        jsx('span', { className: 'text-[11px] text-muted-foreground',
+          children: text(`已选 ${selectedIds.size} 个`, `${selectedIds.size} selected`) })
+      ] }),
+      jsx('div', { className: 'max-h-72 overflow-y-auto rounded-md border border-border', children: filteredItems.map(item => {
+        const selected = selectedIds.has(item.id)
+        return jsxs('label', {
+          className: `flex cursor-pointer items-center gap-2 border-b border-border/60 px-2.5 py-2 text-xs last:border-b-0 ${selected ? 'bg-primary/10' : 'hover:bg-accent/30'}`,
+          children: [
+            jsx('input', { type: 'checkbox', checked: selected, onChange: () => toggleMember(item.id) }),
+            jsx('span', { className: 'min-w-0 flex-1 truncate text-foreground', children: item.title }),
+            jsx('span', { className: 'text-muted-foreground', children: item.kind })
+          ]
+        }, item.id)
+      }) }),
+      jsxs('div', { className: 'flex flex-wrap gap-2', children: [
+        jsx(Button, { size: 'sm', onClick: save, children: text('保存', 'Save') }),
+        jsx(Button, { size: 'sm', variant: 'outline', onClick: () => setDraft(null),
+          children: text('取消', 'Cancel') })
+      ] })
+    ] }),
+    jsxs('div', { className: 'flex flex-wrap items-center justify-between gap-3', children: [
+      jsxs('div', { className: 'space-y-0.5', children: [
+        jsx('div', { className: 'text-xs text-foreground', children: text('自动轮播', 'Auto rotation') }),
+        jsx('div', { className: 'text-[11px] text-muted-foreground', children: !group
+          ? text('先新建并选择一个轮播列表', 'Create and select a rotation list first')
+          : candidates.length < 2
+            ? text('当前列表至少需要 2 个可播放壁纸', 'The selected list needs at least two playable wallpapers')
+            : group.trigger === 'videoEnd'
+              ? text('当前视频播完就换下一张（不看间隔）', 'Advances when the current video ends')
+              : text(`每 ${group.interval} 分钟切换一次`, `Advances every ${group.interval} minutes`) })
+      ] }),
+      jsx('label', { className: 'flex items-center gap-2 text-xs text-foreground', children: [
+        jsx('input', {
+          type: 'checkbox', checked: config.rotationEnabled,
+          disabled: !group || candidates.length < 2,
+          onChange: event => enableRotation(event.target.checked)
+        }),
+        t('rotationEnabled')
+      ] })
+    ] }),
+    jsxs('div', { className: 'flex flex-wrap items-center gap-2 border-t border-border/60 pt-3', children: [
+      jsx('span', { className: 'text-xs text-muted-foreground', children: text('图片轮播', 'Picture slideshow') }),
+      jsx('span', { className: 'text-[11px] text-muted-foreground',
+        children: text('多图 WE 项目内部的换图间隔；0 = 跟随壁纸', 'Interval inside multi-image WE projects; 0 = follow the wallpaper') }),
+      jsx(Select, {
+        value: String(config.pictureSlideSeconds || 0),
+        onChange: value => controller.changeConfig({ pictureSlideSeconds: Number(value) }),
+        children: PICTURE_INTERVALS.map(seconds => jsx('option', { value: seconds,
+          children: seconds === 0 ? text('跟随壁纸', 'Follow wallpaper')
+            : seconds < 60 ? text(`${seconds} 秒`, `${seconds} s`)
+            : text(`${seconds / 60} 分钟`, `${seconds / 60} min`)
+        }, seconds))
+      })
+    ] })
+  ] })
+}
+return { RotationGroupEditor }
+})()
+
+// ─── Submodule: Font settings ────────────────────────────────
+const { FontSettingsPanel } = (() => {
+const BUILTIN_FAMILIES = [
+  ['', '跟随 Hermes / Follow Hermes'],
+  ['Microsoft YaHei', '微软雅黑 / Microsoft YaHei'],
+  ['KaiTi', '楷体 / KaiTi'],
+  ['SimSun', '宋体 / SimSun'],
+  ['SimHei', '黑体 / SimHei'],
+  ['STXingkai', '行楷 / STXingkai'],
+  ['monospace', '等宽 / Monospace']
+]
+const ROLE_LABELS = {
+  'markdown-h1': ['标题 1', 'Heading 1'],
+  'markdown-h2': ['标题 2', 'Heading 2'],
+  'markdown-h3': ['标题 3', 'Heading 3'],
+  'markdown-h4': ['标题 4', 'Heading 4'],
+  'markdown-base': ['对话正文', 'Conversation body'],
+  'markdown-small': ['小字说明', 'Caption'],
+  'markdown-code': ['行内代码', 'Inline code'],
+  'markdown-code-block': ['代码块', 'Code block'],
+  'markdown-table': ['表格', 'Table'],
+  'markdown-table-head': ['表头', 'Table header'],
+  'xs-13': ['界面小字', 'UI small'],
+  'xxs-12': ['界面极小字', 'UI tiny']
+}
+const COLOR_LABELS = {
+  primary: ['正文', 'Primary'],
+  secondary: ['次要文字', 'Secondary'],
+  tertiary: ['弱化说明', 'Tertiary'],
+  caption: ['极小说明', 'Caption'],
+  dimmed: ['禁用 / 更弱', 'Dimmed']
+}
+const isZh = () => String(typeof document !== 'undefined'
+  ? (document.documentElement?.lang || navigator.language || '')
+  : (typeof navigator !== 'undefined' ? navigator.language : '')).toLowerCase().startsWith('zh')
+const text = (zh, en) => isZh() ? zh : en
+const setId = () => `font-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
+
+function pickValues(config) {
+  return Object.fromEntries(FONT_SET_KEYS.map(key => [key, config[key]]))
+}
+
+function FontSettingsPanel({ config, controller, fontList, loadingFonts, scanFonts }) {
+  const [newName, setNewName] = useState('')
+  const [setMessage, setSetMessage] = useState('')
+  const importRef = useRef(null)
+  const activeSet = config.fontSets.find(item => item.id === config.fontSetId) || null
+
+  const families = [
+    ...BUILTIN_FAMILIES,
+    ...fontList.map(name => [name, name])
+  ].filter(([value, label], index, list) =>
+    list.findIndex(item => item[0] === value && item[1] === label) === index)
+
+  const fontSetsFromPatch = patch => {
+    if (!activeSet) return config.fontSets
+    const nextValues = { ...activeSet.values, ...patch }
+    return config.fontSets.map(item => item.id === activeSet.id ? { ...item, values: nextValues } : item)
+  }
+
+  const changeFont = patch => {
+    const valueKeys = Object.keys(patch).filter(key => FONT_SET_KEYS.includes(key))
+    controller.changeConfig({
+      ...patch,
+      ...(valueKeys.length ? { fontSets: fontSetsFromPatch(patch) } : {})
+    })
+  }
+
+  const applySet = id => {
+    const set = config.fontSets.find(item => item.id === id)
+    if (!set) {
+      controller.changeConfig({ fontSetId: '' })
+      return
+    }
+    controller.changeConfig({ ...set.values, fontSetId: set.id })
+  }
+
+  const createSet = () => {
+    const set = {
+      id: setId(),
+      name: newName.trim() || text(`字体集 ${config.fontSets.length + 1}`, `Font set ${config.fontSets.length + 1}`),
+      values: pickValues(config)
+    }
+    controller.changeConfig({ fontSets: [...config.fontSets, set], fontSetId: set.id })
+    setNewName('')
+    setSetMessage(text('字体集已创建。', 'Font set created.'))
+  }
+
+  const renameSet = name => {
+    if (!activeSet) return
+    controller.changeConfig({
+      fontSets: config.fontSets.map(item => item.id === activeSet.id
+        ? { ...item, name: name.slice(0, 80), values: pickValues(config) }
+        : item)
+    })
+  }
+
+  const saveSet = () => {
+    if (!activeSet) return
+    controller.changeConfig({
+      fontSets: config.fontSets.map(item => item.id === activeSet.id
+        ? { ...item, values: pickValues(config) }
+        : item)
+    })
+    setSetMessage(text('当前字体集已更新。', 'Current font set updated.'))
+  }
+
+  const deleteSet = () => {
+    if (!activeSet) return
+    controller.changeConfig({
+      fontSets: config.fontSets.filter(item => item.id !== activeSet.id),
+      fontSetId: ''
+    })
+    setSetMessage(text('字体集已删除。', 'Font set deleted.'))
+  }
+
+  const exportSet = () => {
+    const payload = {
+      format: 'hermes-wallpaper-fontset@1',
+      id: activeSet?.id || 'current',
+      name: activeSet?.name || text('当前字体', 'Current typography'),
+      values: pickValues(config)
+    }
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `${payload.name.replace(/[\\/:*?"<>|]/g, '-')}.fontset.json`
+    anchor.click()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }
+
+  const importSet = async event => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    try {
+      const payload = JSON.parse(await file.text())
+      const values = payload?.values || payload?.settings || payload
+      if (!values || typeof values !== 'object') throw new Error('invalid font set')
+      const imported = {
+        id: setId(),
+        name: String(payload?.name || file.name.replace(/\.fontset\.json$/i, '')).slice(0, 80),
+        values: Object.fromEntries(FONT_SET_KEYS.filter(key => key in values).map(key => [key, values[key]]))
+      }
+      for (const key of FONT_SET_KEYS) {
+        if (!(key in imported.values)) imported.values[key] = config[key]
+      }
+      controller.changeConfig({ ...imported.values, fontSets: [...config.fontSets, imported], fontSetId: imported.id })
+      setSetMessage(text('字体集已导入。', 'Font set imported.'))
+    } catch {
+      setSetMessage(text('这个文件不是有效的字体集。', 'This file is not a valid font set.'))
+    } finally {
+      event.target.value = ''
+    }
+  }
+
+  const setRoleSize = (role, value) => {
+    const themeSize = { ...config.themeSize }
+    if (!value) delete themeSize[role]
+    else themeSize[role] = Number(value)
+    changeFont({ themeSize })
+  }
+
+  const setRoleWeight = (role, value) => {
+    const themeWeight = { ...config.themeWeight }
+    if (!value) delete themeWeight[role]
+    else themeWeight[role] = Number(value)
+    changeFont({ themeWeight })
+  }
+
+  const setRoleFamily = (role, value) => {
+    const themeFamily = { ...config.themeFamily }
+    if (!value) delete themeFamily[role]
+    else themeFamily[role] = value
+    changeFont({ themeFamily })
+  }
+
+  const setComponent = (id, patch) => {
+    const componentFonts = { ...config.componentFonts }
+    const current = { ...(componentFonts[id] || {}), ...patch }
+    for (const key of Object.keys(current)) {
+      if (current[key] === '' || current[key] === 0) delete current[key]
+    }
+    if (Object.keys(current).length) componentFonts[id] = current
+    else delete componentFonts[id]
+    changeFont({ componentFonts })
+  }
+
+  const setColor = (role, mode, value) => {
+    const current = config.themeColors[role] || {
+      light: config.accent, dark: config.accent
+    }
+    const next = { ...current, [mode]: value }
+    if (!config.themeDarkSeparate) next.dark = value
+    changeFont({ themeColors: { ...config.themeColors, [role]: next } })
+  }
+
+  const clearColor = role => {
+    const themeColors = { ...config.themeColors }
+    delete themeColors[role]
+    changeFont({ themeColors })
+  }
+
+  const setUiColor = (key, value) => changeFont({ [key]: value })
+
+  return jsxs('div', { className: 'flex flex-col gap-4', children: [
+    jsxs('div', { className: 'flex items-center justify-between gap-3 text-xs text-foreground', children: [
+      jsx('span', { className: 'font-medium', children: text('启用自定义排版与配色', 'Enable custom typography and colours') }),
+      jsx(Switch, {
+        checked: config.fontCustom, 'aria-label': text('启用自定义排版', 'Enable custom typography'),
+        onCheckedChange: value => controller.changeConfig({ fontCustom: value })
+      })
+    ] }),
+
+    jsxs('div', { className: 'flex flex-col gap-2 rounded-lg border border-border bg-background/40 p-3', children: [
+      jsxs('div', { className: 'flex flex-wrap items-end gap-2', children: [
+        jsxs('label', { className: 'flex min-w-48 flex-1 flex-col gap-1.5 text-xs text-foreground', children: [
+          jsx('span', { className: 'text-muted-foreground', children: text('字体集', 'Font set') }),
+          jsxs('select', {
+            value: config.fontSetId,
+            onChange: event => applySet(event.target.value),
+            className: 'rounded-md border border-border bg-background px-2.5 py-1.5 text-xs',
+            children: [
+              jsx('option', { value: '', children: text('— 未命名当前设置 —', '— Current unsaved settings —') }),
+              ...config.fontSets.map(set => jsx('option', { value: set.id, children: set.name }, set.id))
+            ]
+          })
+        ] }),
+        jsx(Button, { size: 'sm', variant: 'outline', onClick: saveSet, disabled: !activeSet,
+          children: text('保存到字体集', 'Save to set') }),
+        jsx(Button, { size: 'sm', variant: 'outline', onClick: exportSet,
+          children: text('导出', 'Export') }),
+        jsx(Button, { size: 'sm', variant: 'outline', onClick: () => importRef.current?.click(),
+          children: text('导入', 'Import') }),
+        jsx('input', { ref: importRef, type: 'file', accept: '.json', className: 'hidden',
+          onChange: event => void importSet(event) })
+      ] }),
+      jsxs('div', { className: 'flex flex-wrap items-end gap-2', children: [
+        jsx(Input, {
+          value: newName, onChange: event => setNewName(event.target.value),
+          placeholder: text('新字体集名称', 'New font set name'),
+          className: 'max-w-56'
+        }),
+        jsx(Button, { size: 'sm', onClick: createSet, children: text('新建字体集', 'New font set') }),
+        activeSet && jsx(Input, {
+          value: activeSet.name, onChange: event => renameSet(event.target.value),
+          className: 'max-w-56', 'aria-label': text('字体集名称', 'Font set name')
+        }),
+        activeSet && jsx(Button, { size: 'sm', variant: 'outline', onClick: deleteSet,
+          children: text('删除字体集', 'Delete font set') })
+      ] }),
+      setMessage && jsx('p', { className: 'text-[11px] text-muted-foreground', children: setMessage })
+    ] }),
+
+    jsxs('label', { className: 'flex flex-col gap-1.5 text-xs text-foreground', children: [
+      jsx('span', { className: 'font-medium', children: text('全局字体', 'Global family') }),
+      jsx('span', { className: 'text-[11px] text-muted-foreground',
+        children: text('作为默认字族；角色与组件仍可单独覆盖。', 'Acts as the default family; roles and components can still override it.') }),
+      jsx('select', {
+        value: config.globalFamily,
+        onChange: event => changeFont({ globalFamily: event.target.value }),
+        className: 'rounded-md border border-border bg-background px-2.5 py-1.5 text-xs',
+        children: families.map(([value, label]) => jsx('option', { value, children: label }, `${value}:${label}`))
+      })
+    ] }),
+    jsx(Button, {
+      size: 'sm', variant: 'outline', className: 'w-fit',
+      onClick: () => void scanFonts?.(), disabled: loadingFonts,
+      children: loadingFonts ? text('正在扫描系统字体…', 'Scanning system fonts…')
+        : text(`扫描系统字体（${fontList.length}）`, `Scan system fonts (${fontList.length})`)
+    }),
+
+    jsxs('div', { className: 'space-y-2', children: [
+      jsx('div', { className: 'text-xs font-medium text-foreground', children: text('文字颜色角色', 'Text colour roles') }),
+      jsxs('label', { className: 'flex items-center justify-between gap-3 text-xs text-foreground', children: [
+        jsx('span', { className: 'text-muted-foreground', children: text('深色主题单独设置', 'Separate colours for dark theme') }),
+        jsx(Switch, {
+          checked: config.themeDarkSeparate,
+          onCheckedChange: value => changeFont({ themeDarkSeparate: value })
+        })
+      ] }),
+      jsx('div', { className: 'grid gap-2 sm:grid-cols-2', children: THEME_COLOR_ROLE_IDS.map(role => {
+        const pair = config.themeColors[role]
+        return jsxs('div', { className: 'flex flex-wrap items-center gap-2 rounded-md border border-border bg-background/50 px-2.5 py-2', children: [
+          jsx('span', { className: 'min-w-24 flex-1 text-xs text-foreground', children: text(...COLOR_LABELS[role]) }),
+          jsxs('label', { className: 'flex items-center gap-1 text-[11px] text-muted-foreground', children: [
+            text('浅', 'Light'),
+            jsx('input', {
+              type: 'color', value: pair?.light || config.accent,
+              onChange: event => setColor(role, 'light', event.target.value),
+              className: 'h-7 w-9 rounded border border-border bg-transparent'
+            })
+          ] }),
+          config.themeDarkSeparate && jsxs('label', { className: 'flex items-center gap-1 text-[11px] text-muted-foreground', children: [
+            text('深', 'Dark'),
+            jsx('input', {
+              type: 'color', value: pair?.dark || config.accent,
+              onChange: event => setColor(role, 'dark', event.target.value),
+              className: 'h-7 w-9 rounded border border-border bg-transparent'
+            })
+          ] }),
+          pair && jsx('button', {
+            type: 'button', className: 'text-[11px] text-muted-foreground hover:text-foreground',
+            onClick: () => clearColor(role), children: text('清除', 'Clear')
+          })
+        ] }, role)
+      }) })
+    ] }),
+
+    jsxs('details', { className: 'rounded-lg border border-border bg-background/40 p-3', children: [
+      jsx('summary', { className: 'cursor-pointer text-xs font-medium text-foreground',
+        children: text('高级排版角色（字号 / 字重 / 字族）', 'Advanced type roles (size / weight / family)') }),
+      jsx('div', { className: 'mt-3 max-h-96 overflow-y-auto rounded-md border border-border', children: TYPE_ROLE_IDS.map(role => {
+        const size = config.themeSize[role] || ''
+        const weight = config.themeWeight[role] || ''
+        const family = config.themeFamily[role] || ''
+        return jsxs('div', { className: 'grid gap-2 border-b border-border/70 px-2.5 py-2 text-xs last:border-b-0 sm:grid-cols-[minmax(90px,1fr)_72px_90px_minmax(130px,1fr)]', children: [
+          jsx('span', { className: 'flex items-center text-foreground', children: text(...ROLE_LABELS[role]) }),
+          jsx('input', {
+            type: 'number', min: 8, max: 48, value: size, placeholder: text('字号', 'Size'),
+            onChange: event => setRoleSize(role, event.target.value),
+            className: 'rounded-md border border-border bg-background px-2 py-1.5 text-xs'
+          }),
+          jsxs('select', {
+            value: String(weight),
+            onChange: event => setRoleWeight(role, event.target.value),
+            className: 'rounded-md border border-border bg-background px-2 py-1.5 text-xs',
+            children: [
+              jsx('option', { value: '', children: text('默认', 'Default') }),
+              ...[300, 400, 500, 600, 700, 800, 900].map(value =>
+                jsx('option', { value, children: value }, value))
+            ]
+          }),
+          jsx('select', {
+            value: family,
+            onChange: event => setRoleFamily(role, event.target.value),
+            className: 'rounded-md border border-border bg-background px-2 py-1.5 text-xs',
+            children: families.map(([value, label]) => jsx('option', { value, children: label }, `${role}:${value}`))
+          })
+        ] }, role)
+      }) })
+    ] }),
+
+    jsxs('div', { className: 'space-y-2', children: [
+      jsx('div', { className: 'text-xs font-medium text-foreground', children: text('组件级字体', 'Component fonts') }),
+      jsx('div', { className: 'grid gap-2 sm:grid-cols-2', children: COMPONENT_FONT_TARGETS.map(target => {
+        const value = config.componentFonts[target.id] || {}
+        return jsxs('div', { className: 'flex flex-col gap-2 rounded-md border border-border bg-background/50 p-2.5', children: [
+          jsx('div', { className: 'text-xs text-foreground', children: target.label }),
+          jsxs('div', { className: 'grid grid-cols-[64px_82px_1fr] gap-1.5', children: [
+            jsx('input', {
+              type: 'number', min: 8, max: 48, value: value.size || '', placeholder: text('字号', 'Size'),
+              onChange: event => setComponent(target.id, { size: Number(event.target.value) || 0 }),
+              className: 'min-w-0 rounded border border-border bg-background px-1.5 py-1 text-[11px]'
+            }),
+            jsxs('select', {
+              value: String(value.weight || ''),
+              onChange: event => setComponent(target.id, { weight: Number(event.target.value) || 0 }),
+              className: 'min-w-0 rounded border border-border bg-background px-1 py-1 text-[11px]',
+              children: [
+                jsx('option', { value: '', children: text('默认', 'Default') }),
+                ...[300, 400, 500, 600, 700, 800].map(weight =>
+                  jsx('option', { value: weight, children: weight }, weight))
+              ]
+            }),
+            jsxs('select', {
+              value: value.family || '',
+              onChange: event => setComponent(target.id, { family: event.target.value }),
+              className: 'min-w-0 rounded border border-border bg-background px-1 py-1 text-[11px]',
+              children: families.map(([family, label]) => jsx('option', { value: family, children: label }, `${target.id}:${family}`))
+            })
+          ] })
+        ] }, target.id)
+      }) })
+    ] }),
+
+    jsxs('div', { className: 'space-y-3 rounded-lg border border-border bg-background/40 p-3', children: [
+      jsxs('div', { className: 'flex items-center justify-between gap-3 text-xs text-foreground', children: [
+        jsx('span', { className: 'font-medium', children: text('全局 UI 配色', 'Global UI colours') }),
+        jsx(Switch, {
+          checked: config.uiColorCustom,
+          onCheckedChange: value => controller.changeConfig({ uiColorCustom: value })
+        })
+      ] }),
+      config.uiColorCustom && jsxs('div', { className: 'grid gap-2 sm:grid-cols-2 xl:grid-cols-3', children: [
+        [['accent', '主色', 'Accent']], [['uiColorSend', '发送键', 'Send button']],
+        [['uiColorLink', '链接', 'Links']], [['uiColorFileIcon', '</> 文件图标', '</> file icon']],
+        [['uiColorTab', '会话页签', 'Session tabs']], [['uiColorDeepDiving', '深度求索状态', 'Deep-diving status']]
+      ].map(([[key, zh, en]]) => jsxs('label', { className: 'flex items-center justify-between gap-2 rounded-md border border-border bg-background/50 px-2.5 py-2 text-xs', children: [
+        jsx('span', { children: text(zh, en) }),
+        jsx('input', {
+          type: 'color',
+          value: config[key] || config.accent,
+          onChange: event => setUiColor(key, event.target.value),
+          className: 'h-7 w-10 rounded border border-border bg-transparent'
+        })
+      ] }, key)) })
+    ] }),
+
+    jsxs('label', { className: 'flex items-center justify-between gap-3 rounded-lg border border-border bg-background/40 px-3 py-2 text-xs text-foreground', children: [
+      jsxs('span', { children: [
+        jsx('span', { className: 'block font-medium', children: text('输入光标', 'Input caret') }),
+        jsx('span', { className: 'block text-[11px] text-muted-foreground',
+          children: text('独立于字体总开关，自动 = 跟随 Hermes。', 'Independent of the typography switch; Auto follows Hermes.') })
+      ] }),
+      jsxs('span', { className: 'flex items-center gap-2', children: [
+        jsx('input', {
+          type: 'color', value: config.caretColor || '#4f8cff',
+          onChange: event => controller.changeConfig({ caretColor: event.target.value }),
+          className: 'h-7 w-10 rounded border border-border bg-transparent'
+        }),
+        config.caretColor && jsx('button', {
+          type: 'button', className: 'text-[11px] text-muted-foreground hover:text-foreground',
+          onClick: () => controller.changeConfig({ caretColor: '' }), children: text('自动', 'Auto')
+        })
+      ] })
+    ] })
+  ] })
+}
+return { FontSettingsPanel }
+})()
+
+// ─── Submodule: Appearance Settings Panel ─────────────────────
+const { AppearanceSettingsPanel } = (() => {
+const isZh = () => String(typeof document !== 'undefined'
+  ? (document.documentElement?.lang || navigator.language || '')
+  : (typeof navigator !== 'undefined' ? navigator.language : '')).toLowerCase().startsWith('zh')
+const text = (zh, en) => isZh() ? zh : en
+const TABS = [
+  ['library', '壁纸库', 'Library'],
+  ['appearance', '外观', 'Appearance'],
+  ['effects', '效果', 'Effects'],
+  ['audio', '声音', 'Audio'],
+  ['advanced', '高级', 'Advanced'],
+  ['extensions', '扩展', 'Extensions'],
+  ['about', '关于', 'About']
+]
+const EXCLUDED_PRESET_KEYS = new Set([
+  'schemaVersion', 'wallpaperSource', 'weSelection', 'hiddenWallpaperIds',
+  'userProps', 'rotationGroupId', 'fontSetId', 'weRoots'
+])
+const RESET_KEYS = {
+  library: [
+    'wallpaperTransition', 'wallpaperTransitionDir', 'wallpaperTransitionSpeed',
+    'rotationEnabled', 'rotationGroups', 'rotationSeeded', 'pictureSlideSeconds',
+    'contentRatingFilter', 'typeFilter', 'folderFilter', 'orientationFilter'
+  ],
+  appearance: [
+    'maskOcclusion', 'wallpaperBlur', 'wallpaperOpacity', 'backgroundBrightness',
+    'backgroundContrast', 'backgroundSaturate', 'wallpaperFlip', 'layerPositionX',
+    'layerPositionY', 'layerScale', 'panelGlass', 'bubbleOpacity', 'composerFrost',
+    'surfaceFrost', 'glassSaturation', 'glassBorder', 'glassHighlight', 'glassColor',
+    'glassDarkSeparate', 'glassFidelity', 'chatGlassFidelity', 'settingsWindowTransparency',
+    'settingsWindowBlur', 'sidebarGlass', 'sidebarFollowGlobal', 'sidebarBlur', 'sidebarAlpha',
+    'sidebarColor', 'leftSidebarGlass', 'leftSidebarCornerRadius', 'leftSidebarSquareTL',
+    'leftSidebarSquareTR', 'leftSidebarSquareBR', 'leftSidebarSquareBL', 'rightSidebarCornerRadius',
+    'rightSidebarSquareTL', 'rightSidebarSquareTR', 'rightSidebarSquareBR', 'rightSidebarSquareBL',
+    'titlebarGlass', 'fontCustom', 'themeColors', 'themeDarkSeparate', 'themeSize', 'themeWeight',
+    'themeFamily', 'globalFamily', 'componentFonts', 'accent', 'uiColorCustom', 'uiColorSend',
+    'uiColorLink', 'uiColorFileIcon', 'uiColorTab', 'uiColorDeepDiving', 'caretColor', 'themeFollow'
+  ],
+  effects: [
+    'sceneLive', 'sceneLiveFps', 'sceneAutoQuality', 'sceneRenderDpr', 'sceneVideoTexScale',
+    'liveBootDelay', 'videoPlaybackRate'
+  ],
+  audio: ['wallpaperSound', 'wallpaperVolume'],
+  advanced: ['pickerLayout', 'pauseOnHidden', 'pauseOnBlur', 'pauseOnBattery'],
+  extensions: [
+    'fxEnabled', 'fxClick', 'fxClickStyle', 'fxClickSize', 'fxClickGlow', 'fxTrail',
+    'fxTrailStyle', 'fxTrailLength', 'fxTrailWidth', 'fxTrailGlow', 'fxOpacity', 'fxBlend',
+    'fxColorMode', 'fxColor', 'parallaxEnabled', 'parallaxBg', 'parallaxUi', 'parallaxPlugin',
+    'parallaxUiChatDepth', 'parallaxUiComposerDepth', 'parallaxUiSidebarDepth',
+    'parallaxUiBubbleDepth', 'parallaxPluginDepths', 'parallaxSmooth'
+  ]
+}
+
+const section = (title, description, children) => jsxs('section', {
+  'data-hermes-skins-surface': '',
+  className: 'flex flex-col gap-4 rounded-xl border border-border bg-card p-4',
+  children: [
+    jsxs('div', { className: 'space-y-1', children: [
+      jsx('h3', { className: 'text-sm font-semibold text-foreground', children: title }),
+      description && jsx('p', { className: 'text-[11px] leading-5 text-muted-foreground', children: description })
+    ] }),
+    ...children.filter(Boolean)
+  ]
+})
+
+function downloadJson(name, payload) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = name
+  anchor.click()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+function bytes(value) {
+  const number = Number(value) || 0
+  if (number < 1024) return `${number} B`
+  if (number < 1024 * 1024) return `${(number / 1024).toFixed(1)} KB`
+  if (number < 1024 * 1024 * 1024) return `${(number / 1024 / 1024).toFixed(1)} MB`
+  return `${(number / 1024 / 1024 / 1024).toFixed(2)} GB`
+}
+
+function AppearanceSettingsPanel({
+  store, controller, openScene, loadFonts, loadUploads, importUploads, importUrl,
+  importBing, loadDiagnostics, clearSceneCache, loadNowPlaying
+}) {
+  const t = usePluginI18n('hermes-skins')
+  const config = useValue(store.$config)
+  const [tab, setTab] = useState('library')
+  const [sourceDraft, setSourceDraft] = useState(config.wallpaperSource)
+  const [presetMessage, setPresetMessage] = useState('')
+  const [fontList, setFontList] = useState([])
+  const [fontLoading, setFontLoading] = useState(false)
+  const [diagnostics, setDiagnostics] = useState(null)
+  const [diagnosticsLoading, setDiagnosticsLoading] = useState(false)
+  const [diagnosticsError, setDiagnosticsError] = useState('')
+  const [cacheArmed, setCacheArmed] = useState(false)
+  const [cacheMessage, setCacheMessage] = useState('')
+  const [nowPlaying, setNowPlaying] = useState(null)
+  const [discoveredSlots, setDiscoveredSlots] = useState([])
+
   useEffect(() => setSourceDraft(config.wallpaperSource), [config.wallpaperSource])
-  useLayoutEffect(() => {
-    const el = scrollRef.current
-    const desired = viewMemory[tab] || 0
-    if (!el || desired <= 0) return undefined
-    el.scrollTop = desired
-    // Wallpaper thumbnails grow the page asynchronously after mount, so the
-    // first restore can be clamped by a still-short document. Re-apply for a
-    // short window; the moment the user scrolls on their own, back off.
-    if (el.scrollTop >= desired - 1) return undefined
+
+  useEffect(() => {
+    if (!loadFonts) return
     let cancelled = false
-    let frames = 120
-    let frame = null
-    const cancel = () => {
-      cancelled = true
-      if (frame !== null) cancelAnimationFrame(frame)
-      el.removeEventListener('wheel', cancel)
-      el.removeEventListener('touchmove', cancel)
-    }
-    el.addEventListener('wheel', cancel, { passive: true, once: true })
-    el.addEventListener('touchmove', cancel, { passive: true, once: true })
-    const tick = () => {
-      if (cancelled || !frames) { cancel(); return }
-      frames -= 1
-      if (el.scrollTop >= desired - 1) { cancel(); return }
-      el.scrollTop = desired
-      frame = requestAnimationFrame(tick)
-    }
-    frame = requestAnimationFrame(tick)
-    return cancel
+    setFontLoading(true)
+    loadFonts().then(result => {
+      if (!cancelled && Array.isArray(result?.fonts)) setFontList(result.fonts)
+    }).catch(() => {}).finally(() => { if (!cancelled) setFontLoading(false) })
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    if (tab !== 'advanced' || diagnostics || !loadDiagnostics) return
+    void refreshDiagnostics()
   }, [tab])
 
+  useEffect(() => {
+    if (tab !== 'audio' || !loadNowPlaying) return
+    let cancelled = false
+    const tick = () => {
+      loadNowPlaying().then(result => { if (!cancelled) setNowPlaying(result) }).catch(() => {
+        if (!cancelled) setNowPlaying({ ok: false })
+      })
+    }
+    tick()
+    const timer = setInterval(tick, 5000)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [tab])
+
+  useEffect(() => {
+    if (tab !== 'extensions' || !config.parallaxPlugin) return
+    const skip = new Set(['root', 'main', 'rightbar', 'conversation.view', 'sidebar', 'main.conversation'])
+    const slots = [...document.querySelectorAll('[data-slot]')]
+      .map(element => element.getAttribute('data-slot') || '')
+      .filter(slot => slot && !skip.has(slot) && !slot.startsWith('settings.') &&
+        !slot.startsWith('plugins.') && !slot.startsWith('shell.'))
+    setDiscoveredSlots([...new Set(slots)].sort())
+  }, [tab, config.parallaxPlugin])
+
+  const customSourceValid = !sourceDraft || Boolean(normalizeMediaSource(sourceDraft, config.wallpaperType))
   const commitSource = () => {
     if (customSourceValid && sourceDraft !== config.wallpaperSource) {
       controller.changeConfig({ wallpaperSource: sourceDraft, weSelection: null })
     }
   }
 
-  // Slider bounds come from the single parameter contract in config.js, so the
-  // UI can never offer a narrower range than normalization and rendering honor.
-  const slider = (key, label, description, extraDisabled = false) => {
-    const { min, max, unit } = PARAM_RANGES[key]
-    return jsxs('label', {
-      className: 'flex flex-col gap-1.5',
-      children: [
-        jsxs('span', { className: 'flex justify-between text-xs text-foreground', children: [
-          jsx('span', { children: label }),
-          jsx('span', { className: 'font-mono text-muted-foreground', children: `${config[key]}${unit}` })
-        ] }),
-        jsx('input', {
-          type: 'range', min, max, step: 1, value: config[key],
-          disabled: !(active || config.wallpaperSource) || Boolean(preview) || extraDisabled,
-          onChange: event => controller.scheduleConfig({ [key]: Number(event.target.value) }),
-          onPointerUp: () => controller.flushConfig(),
-          onKeyUp: () => controller.flushConfig(),
-          onBlur: () => controller.flushConfig(),
-          className: 'w-full accent-primary'
-        }),
-        jsx('span', { className: 'text-[11px] text-muted-foreground', children: description })
-      ]
-    })
+  const slider = (key, label, description, options = {}) => {
+    const range = PARAM_RANGES[key]
+    if (!range) return null
+    const value = Number(config[key]) || 0
+    return jsxs('label', { className: 'flex flex-col gap-1.5', children: [
+      jsxs('span', { className: 'flex justify-between gap-3 text-xs text-foreground', children: [
+        jsx('span', { children: label }),
+        jsx('span', { className: 'font-mono text-muted-foreground', children: `${value}${range.unit}` })
+      ] }),
+      jsx('input', {
+        type: 'range', min: range.min, max: range.max, step: options.step || 1, value,
+        onChange: event => controller.scheduleConfig({ [key]: Number(event.target.value) }),
+        onPointerUp: () => controller.flushConfig(),
+        onKeyUp: () => controller.flushConfig(),
+        onBlur: () => controller.flushConfig(),
+        className: 'w-full accent-primary'
+      }),
+      description && jsx('span', { className: 'text-[11px] leading-4 text-muted-foreground', children: description })
+    ] })
   }
 
-  const gallery = jsxs('div', { className: 'flex flex-col gap-5', children: [
-    jsxs('div', { className: 'flex flex-wrap items-center gap-2', children: [
-      jsx('span', { className: 'text-xs text-muted-foreground', children: t('filterByTag') }),
-      ['all', 'art', 'anime', 'dark', 'light', 'cyber'].map(value => jsx('button', {
-        key: value, type: 'button', onClick: () => setTag(value),
-        'aria-pressed': tag === value,
-        className: `rounded-full px-3 py-1 text-xs ${tag === value ? 'bg-primary text-primary-foreground' : 'bg-background text-foreground hover:bg-accent/50'}`,
-        children: t(`tags${value[0].toUpperCase()}${value.slice(1)}`)
-      }))
-    ] }),
-    jsxs('div', { className: 'grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3', children: [
-      jsxs('section', { 'data-hermes-skins-surface': '', className: 'flex flex-col justify-between gap-4 rounded-xl border border-border bg-card p-5', children: [
-        jsxs('div', { className: 'space-y-2', children: [
-          jsx('h2', { className: 'font-semibold text-foreground', children: t('resetToDefault') }),
-          jsx('p', { className: 'text-xs text-muted-foreground', children: t('officialDefaultDesc') })
-        ] }),
-        jsx(Button, { variant: 'outline', onClick: () => controller.restore(theme),
-          disabled: !active && !preview, children: t('resetToDefault') })
+  const toggle = (key, label, description, disabled = false) => jsxs('label', {
+    className: `flex items-start justify-between gap-4 text-xs text-foreground ${disabled ? 'opacity-50' : ''}`,
+    children: [
+      jsxs('span', { className: 'min-w-0 space-y-0.5', children: [
+        jsx('span', { className: 'block font-medium', children: label }),
+        description && jsx('span', { className: 'block text-[11px] leading-4 text-muted-foreground', children: description })
       ] }),
-      skins.filter(s => tag === 'all' || s.tags?.includes(tag)).map(skin => {
-        const isActive = theme.themeName === skin.id && !preview
-        const isPreview = preview?.id === skin.id
-        return jsxs('section', {
-          key: skin.id,
-          'data-hermes-skins-surface': '',
-          className: 'flex flex-col overflow-hidden rounded-xl border border-border bg-card',
-          children: [
-            skin.wallpaper
-              ? jsx('img', { src: skin.wallpaper, alt: '', className: 'h-32 w-full object-cover' })
-              : jsx('div', { className: 'h-32', style: { background: skin.colors?.background || '#111827' } }),
-            jsxs('div', { className: 'flex flex-1 flex-col gap-3 p-4', children: [
-              jsxs('div', { className: 'flex items-center justify-between gap-2', children: [
-                jsx('h2', { className: 'font-semibold text-foreground', children: skin.name }),
-                isActive ? jsx(Badge, { children: t('activeBadge') }) :
-                  isPreview ? jsx(Badge, { variant: 'secondary', children: t('tryOnBadge') }) : null
-              ] }),
-              jsx('p', { className: 'flex-1 text-xs text-muted-foreground', children: skin.tagline || skin.description }),
-              jsxs('div', { className: 'flex gap-2', children: [
-                jsx(Button, { size: 'sm', variant: 'secondary', className: 'flex-1',
-                  onClick: () => controller.tryOn(skin, theme), children: t('tryOnButton') }),
-                jsx(Button, { size: 'sm', className: 'flex-1', disabled: isActive,
-                  onClick: () => controller.apply(skin, theme), children: t('applyButton') })
-              ] })
-            ] })
-          ]
-        })
+      jsx(Switch, {
+        checked: Boolean(config[key]), disabled, 'aria-label': label,
+        onCheckedChange: value => controller.changeConfig({ [key]: value })
       })
-    ] })
-  ] })
+    ]
+  })
 
-  const wallpaper = jsxs('div', { className: 'flex flex-col gap-5', children: [
-    jsxs('section', { 'data-hermes-skins-surface': '', className: 'flex max-w-2xl flex-col gap-5 rounded-xl border border-border bg-card p-5', children: [
-    jsxs('div', { className: 'flex items-center justify-between gap-4', children: [
-      jsxs('div', { className: 'space-y-1', children: [
-        jsx('h2', { className: 'font-semibold text-foreground', children: t('wallpaperControls') }),
-        jsx('p', { className: 'text-xs text-muted-foreground', children: active || config.wallpaperSource ? t('enableWallpaperDesc') : t('selectSkinFirst') })
+  const select = (key, label, options, description) => jsxs('label', {
+    className: 'flex flex-col gap-1.5 text-xs text-foreground',
+    children: [
+      jsxs('span', { className: 'space-y-0.5', children: [
+        jsx('span', { className: 'block font-medium', children: label }),
+        description && jsx('span', { className: 'block text-[11px] text-muted-foreground', children: description })
       ] }),
-      jsx(Switch, { checked: Boolean((active || config.wallpaperSource) && (preview ? preview.wallpaper : config.wallpaperEnabled)), disabled: !(active || config.wallpaperSource) || Boolean(preview),
-        'aria-label': t('enableWallpaper'), onCheckedChange: value => controller.changeConfig({ wallpaperEnabled: value }) })
-    ] }),
-    jsxs('label', { className: 'flex flex-col gap-2 text-xs text-foreground', children: [
-      t('wallpaperType'),
-      jsx(SegmentedControl, { value: config.wallpaperType, disabled: Boolean(preview),
-        onChange: value => controller.changeConfig({ wallpaperType: value }),
-        options: [
-          { id: 'image', label: t('wallpaperTypeImage') },
-          { id: 'video', label: t('wallpaperTypeVideo') },
-          ...(config.wallpaperType === 'scene' ? [{ id: 'scene', label: t('weTypeScene') }] : []),
-          ...(config.wallpaperType === 'web' ? [{ id: 'web', label: t('weTypeWeb') }] : [])
+      jsx('select', {
+        value: String(config[key]),
+        onChange: event => controller.changeConfig({ [key]: typeof config[key] === 'number'
+          ? Number(event.target.value) : event.target.value }),
+        className: 'rounded-md border border-border bg-background px-2.5 py-1.5 text-xs',
+        children: options.map(option => jsx('option', { value: option[0], children: option[1] }, option[0]))
+      })
+    ]
+  })
+
+  const currentTitle = config.weSelection?.title ||
+    config.wallpaperSource.split(/[\\/]/).filter(Boolean).at(-1) || ''
+
+  const exportPreset = () => {
+    const settings = Object.fromEntries(Object.keys(DEFAULT_CONFIG)
+      .filter(key => !EXCLUDED_PRESET_KEYS.has(key))
+      .map(key => [key, config[key]]))
+    downloadJson('hermes-wallpaper-preset.json', {
+      format: 'hermes-wallpaper-preset@2',
+      version: 2,
+      settings
+    })
+    setPresetMessage(t('presetExported'))
+  }
+
+  const importPreset = async event => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    try {
+      const payload = JSON.parse(await file.text())
+      const settings = payload?.settings ?? payload
+      const patch = Object.fromEntries(Object.keys(DEFAULT_CONFIG).filter(key => key in (settings || {}))
+        .map(key => [key, settings[key]]))
+      if (!Object.keys(patch).length) throw new Error('empty preset')
+      controller.changeConfig(patch)
+      setPresetMessage(t('presetImported'))
+    } catch {
+      setPresetMessage(t('presetInvalid'))
+    } finally {
+      event.target.value = ''
+    }
+  }
+
+  const resetTab = () => {
+    const keys = RESET_KEYS[tab] || []
+    if (!keys.length) return
+    const patch = Object.fromEntries(keys.filter(key => key in DEFAULT_CONFIG)
+      .map(key => [key, DEFAULT_CONFIG[key]]))
+    controller.changeConfig(patch)
+  }
+
+  const refreshDiagnostics = async () => {
+    if (!loadDiagnostics || diagnosticsLoading) return
+    setDiagnosticsLoading(true)
+    setDiagnosticsError('')
+    try {
+      setDiagnostics(await loadDiagnostics())
+    } catch (cause) {
+      setDiagnosticsError(String(cause?.message || cause))
+    } finally {
+      setDiagnosticsLoading(false)
+    }
+  }
+
+  const clearCache = async () => {
+    if (!cacheArmed) {
+      setCacheArmed(true)
+      return
+    }
+    setCacheArmed(false)
+    setCacheMessage('')
+    try {
+      const result = await clearSceneCache?.()
+      if (!result?.ok) throw new Error(result?.error || 'Cache cleanup failed')
+      setCacheMessage(text('场景缓存已清理。', 'Scene cache cleared.'))
+      setDiagnostics(null)
+      await refreshDiagnostics()
+    } catch (cause) {
+      setCacheMessage(String(cause?.message || cause))
+    }
+  }
+
+  const scanFonts = async () => {
+    if (!loadFonts || fontLoading) return
+    setFontLoading(true)
+    try {
+      const result = await loadFonts()
+      if (Array.isArray(result?.fonts)) setFontList(result.fonts)
+    } catch {
+      setFontList([])
+    } finally {
+      setFontLoading(false)
+    }
+  }
+
+  const wallpaperProperties = Array.isArray(config.weSelection?.properties)
+    ? config.weSelection.properties.filter(property => !property.hidden) : []
+  const wallpaperOverrides = config.userProps?.[config.weSelection?.id] || {}
+
+  const wallpaperColor = value => {
+    if (typeof value !== 'string') return '#4f8cff'
+    if (/^#[0-9a-f]{6}$/i.test(value)) return value
+    const parts = value.trim().split(/\s+/).map(Number)
+    if (parts.length >= 3 && parts.every(Number.isFinite)) {
+      const max = Math.max(...parts)
+      return `#${parts.slice(0, 3).map(channel => Math.max(0, Math.min(255,
+        Math.round((max <= 1 ? channel * 255 : channel))
+      )).toString(16).padStart(2, '0')).join('')}`
+    }
+    return '#4f8cff'
+  }
+
+  const wallpaperColorWire = value => {
+    const match = /^#([0-9a-f]{6})$/i.exec(value || '')
+    if (!match) return value
+    const number = parseInt(match[1], 16)
+    return [(number >> 16) & 255, (number >> 8) & 255, number & 255]
+      .map(channel => (channel / 255).toFixed(6)).join(' ')
+  }
+
+  const setWallpaperProperty = (name, value) => {
+    const id = config.weSelection?.id
+    if (!id) return
+    const current = { ...(config.userProps?.[id] || {}) }
+    if (value === undefined) delete current[name]
+    else current[name] = value
+    const userProps = { ...(config.userProps || {}) }
+    if (Object.keys(current).length) userProps[id] = current
+    else delete userProps[id]
+    controller.changeConfig({ userProps })
+  }
+
+  const resetWallpaperProperties = () => {
+    const id = config.weSelection?.id
+    if (!id) return
+    const userProps = { ...(config.userProps || {}) }
+    delete userProps[id]
+    controller.changeConfig({ userProps })
+  }
+
+  const tabBar = jsx('div', {
+    role: 'tablist',
+    className: 'sticky top-0 z-10 flex flex-wrap gap-1 rounded-xl border border-border bg-card/95 p-1.5 backdrop-blur',
+    children: TABS.map(([id, zh, en]) => jsx('button', {
+      type: 'button', role: 'tab', 'aria-selected': tab === id,
+      onClick: () => setTab(id),
+      className: `rounded-lg px-3 py-1.5 text-xs transition ${tab === id
+        ? 'bg-primary text-primary-foreground'
+        : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}`,
+      children: text(zh, en)
+    }, id))
+  })
+
+  const tabFooter = RESET_KEYS[tab] && jsx('div', {
+    className: 'flex items-center justify-between gap-3 rounded-lg border border-dashed border-border px-3 py-2',
+    children: [
+      jsx('span', { className: 'text-[11px] text-muted-foreground',
+        children: text('只重置本页参数，不改当前壁纸或隐藏名单。', 'Resets this tab only; the current wallpaper and hidden list stay untouched.') }),
+      jsx(Button, { size: 'sm', variant: 'outline', onClick: resetTab,
+        children: text('重置本页', 'Reset tab') })
+    ]
+  })
+
+  let content = null
+  if (tab === 'library') {
+    const propertiesSection = wallpaperProperties.length > 0 && section(
+      text('壁纸属性', 'Wallpaper properties'),
+      text('由壁纸作者声明的 Scene / Web 属性；修改会即时传给 WebWallGL 并保存在本机。', 'Scene / Web properties declared by the wallpaper author; changes are sent to WebWallGL immediately and stored locally.'),
+      [
+        jsxs('div', { className: 'flex flex-col gap-3', children: wallpaperProperties.map(property => {
+          const overridden = Object.prototype.hasOwnProperty.call(wallpaperOverrides, property.name)
+          const value = overridden ? wallpaperOverrides[property.name] : property.value
+          const label = property.text || property.name
+          const reset = overridden && jsx('button', {
+            type: 'button', className: 'text-[11px] text-muted-foreground hover:text-foreground',
+            onClick: () => setWallpaperProperty(property.name, undefined),
+            children: text('恢复默认', 'Reset')
+          })
+          if (property.type === 'text' || property.type === 'group') {
+            return jsxs('div', { className: 'border-t border-border/60 pt-2 first:border-t-0 first:pt-0', children: [
+              jsx('div', { className: 'text-xs font-medium text-foreground', children: label }),
+              property.type === 'text' && jsx('div', { className: 'mt-0.5 text-[11px] text-muted-foreground',
+                children: property.name })
+            ] }, property.name)
+          }
+          if (property.type === 'bool') {
+            return jsx('div', { className: 'flex items-center justify-between gap-3', children: [
+              jsx('span', { className: 'text-xs text-foreground', children: label }),
+              jsxs('div', { className: 'flex items-center gap-2', children: [
+                reset,
+                jsx('input', {
+                  type: 'checkbox', checked: Boolean(value),
+                  onChange: event => setWallpaperProperty(property.name, event.target.checked)
+                })
+              ] })
+            ] }, property.name)
+          }
+          if (property.type === 'slider') {
+            const min = Number.isFinite(Number(property.min)) ? Number(property.min) : 0
+            const max = Number.isFinite(Number(property.max)) ? Number(property.max) : 1
+            const step = Number.isFinite(Number(property.step)) ? Number(property.step) : 0.01
+            return jsxs('label', { className: 'flex flex-col gap-1.5 text-xs text-foreground', children: [
+              jsxs('span', { className: 'flex items-center justify-between gap-2', children: [
+                jsx('span', { children: label }),
+                jsxs('span', { className: 'flex items-center gap-2', children: [
+                  jsx('span', { className: 'font-mono text-muted-foreground', children: String(value ?? '') }),
+                  reset
+                ] })
+              ] }),
+              jsx('input', {
+                type: 'range', min, max, step, value: Number(value) || 0,
+                onChange: event => setWallpaperProperty(property.name, Number(event.target.value)),
+                onPointerUp: () => controller.flushConfig(),
+                className: 'w-full accent-primary'
+              })
+            ] }, property.name)
+          }
+          if (property.type === 'combo' && property.options?.length) {
+            return jsxs('label', { className: 'flex items-center justify-between gap-3 text-xs text-foreground', children: [
+              jsx('span', { children: label }),
+              jsxs('span', { className: 'flex items-center gap-2', children: [
+                reset,
+                jsxs('select', {
+                  value: String(value ?? ''),
+                  onChange: event => {
+                    const option = property.options.find(item => String(item.value) === event.target.value)
+                    setWallpaperProperty(property.name, option ? option.value : event.target.value)
+                  },
+                  className: 'max-w-56 rounded border border-border bg-background px-2 py-1 text-xs',
+                  children: property.options.map((option, index) => jsx('option', {
+                    value: String(option.value ?? ''), children: option.label || String(option.value ?? '')
+                  }, `${property.name}:${index}`))
+                })
+              ] })
+            ] }, property.name)
+          }
+          if (property.type === 'color') {
+            return jsxs('label', { className: 'flex items-center justify-between gap-3 text-xs text-foreground', children: [
+              jsx('span', { children: label }),
+              jsxs('span', { className: 'flex items-center gap-2', children: [
+                reset,
+                jsx('input', {
+                  type: 'color', value: wallpaperColor(value),
+                  onChange: event => setWallpaperProperty(property.name, wallpaperColorWire(event.target.value)),
+                  className: 'h-7 w-10 rounded border border-border bg-transparent'
+                })
+              ] })
+            ] }, property.name)
+          }
+          return jsxs('label', { className: 'flex flex-col gap-1.5 text-xs text-foreground', children: [
+            jsxs('span', { className: 'flex items-center justify-between gap-2', children: [
+              jsx('span', { children: label }),
+              reset
+            ] }),
+            jsx(Input, {
+              value: typeof value === 'string' ? value : value == null ? '' : String(value),
+              onChange: event => setWallpaperProperty(property.name, event.target.value),
+              placeholder: property.type === 'file' || property.type === 'directory'
+                ? text('相对壁纸目录的路径', 'Path relative to the wallpaper directory')
+                : ''
+            })
+          ] }, property.name)
+        }) }),
+        jsx('div', { className: 'flex justify-end', children: jsx(Button, {
+          size: 'sm', variant: 'outline', onClick: resetWallpaperProperties,
+          children: text('全部恢复默认', 'Reset all')
+        }) })
+      ]
+    )
+    content = [
+      section(t('wallpaperEngineTitle'), t('wallpaperEngineDesc'), [
+        jsxs('div', { className: 'flex items-center justify-between gap-4', children: [
+          jsxs('div', { className: 'min-w-0 space-y-1', children: [
+            jsx('p', { className: 'truncate text-sm font-medium text-foreground',
+              children: currentTitle || t('selectWallpaperFirst') }),
+            jsx('p', { className: 'text-[11px] text-muted-foreground', children: t('enableWallpaperDesc') })
+          ] }),
+          jsx(Switch, {
+            checked: Boolean(config.wallpaperSource && config.wallpaperEnabled),
+            disabled: !config.wallpaperSource,
+            'aria-label': t('enableWallpaper'),
+            onCheckedChange: value => controller.changeConfig({ wallpaperEnabled: value })
+          })
+        ] }),
+        select('wallpaperType', t('wallpaperType'), WALLPAPER_TYPES.map(type =>
+          [type, type === 'image' ? t('wallpaperTypeImage')
+            : type === 'video' ? t('wallpaperTypeVideo')
+            : type === 'scene' ? t('weTypeScene') : t('weTypeWeb')])),
+        jsxs('label', { className: 'flex flex-col gap-2 text-xs text-foreground', children: [
+          t('wallpaperSource'),
+          jsx(Input, {
+            value: sourceDraft,
+            onChange: event => setSourceDraft(event.target.value),
+            onBlur: commitSource,
+            onKeyDown: event => { if (event.key === 'Enter') commitSource() },
+            placeholder: t('wallpaperSourcePlaceholder'),
+            'aria-invalid': !customSourceValid
+          }),
+          jsx('span', { className: 'text-[11px] text-muted-foreground', children: t('sourceCommitHint') }),
+          !customSourceValid && jsx('span', { className: 'text-destructive', children: t('invalidWallpaperSource') })
+        ] }),
+        jsxs('div', { className: 'grid gap-3 sm:grid-cols-2', children: [
+          select('wallpaperMode', t('wallpaperMode'), [
+            ['live', t('wallpaperModeLive')], ['frame', t('wallpaperModeFrame')]
+          ]),
+          select('wallpaperFit', t('wallpaperFit'), [
+            ['cover', t('wallpaperFitCover')], ['contain', t('wallpaperFitContain')],
+            ['center', text('居中原始尺寸', 'Center native size')], ['fill', t('wallpaperFitFill')]
+          ])
         ] })
-    ] }),
-    jsxs('label', { className: 'flex flex-col gap-2 text-xs text-foreground', children: [
-      t('wallpaperMode'),
-      jsx(SegmentedControl, { value: config.wallpaperMode, disabled: Boolean(preview),
-        onChange: value => controller.changeConfig({ wallpaperMode: value }), options: [
-          { id: 'live', label: t('wallpaperModeLive') },
-          { id: 'frame', label: t('wallpaperModeFrame') }
+      ]),
+      propertiesSection,
+      section(text('切换过场', 'Switch transition'), text('手动选壁纸与自动轮播共用同一套过场。', 'Manual picks and auto rotation share the same transition recipe.'), [
+        jsxs('div', { className: 'grid gap-3 sm:grid-cols-3', children: [
+          select('wallpaperTransition', text('过场', 'Transition'), TRANSITION_VALUES.map(value => [value, {
+            cut: text('硬切', 'Cut'), fade: text('交叉淡化', 'Crossfade'),
+            push: text('推移', 'Push'), wipe: text('擦除', 'Wipe'),
+            iris: text('光圈', 'Iris'), zoom: text('缩放', 'Zoom'),
+            bars: text('条带', 'Bars')
+          }[value]])),
+          select('wallpaperTransitionDir', text('方向', 'Direction'), TRANSITION_DIRECTIONS.map(value => [value, {
+            left: text('左', 'Left'), right: text('右', 'Right'),
+            up: text('上', 'Up'), down: text('下', 'Down')
+          }[value]])),
+          select('wallpaperTransitionSpeed', text('速度', 'Speed'), TRANSITION_SPEEDS.map(value => [value, {
+            fast: text('快', 'Fast'), normal: text('标准', 'Normal'), slow: text('慢', 'Slow')
+          }[value]]))
         ] })
-    ] }),
-    jsxs('label', { className: 'flex flex-col gap-2 text-xs text-foreground', children: [
-      t('wallpaperFit'),
-      jsx(SegmentedControl, { value: config.wallpaperFit, disabled: Boolean(preview),
-        onChange: value => controller.changeConfig({ wallpaperFit: value }), options: [
-          { id: 'cover', label: t('wallpaperFitCover') },
-          { id: 'contain', label: t('wallpaperFitContain') },
-          { id: 'fill', label: t('wallpaperFitFill') }
+      ]),
+      section(text('自动轮播', 'Auto rotation'), text('每个列表有自己的壁纸集合、间隔、顺序和推进方式。', 'Each list has its own wallpaper set, interval, order and trigger.'), [
+        jsx(RotationGroupEditor, { store, controller })
+      ]),
+      jsx(WallpaperEnginePanel, {
+        store, controller, openScene, loadUploads, importUploads, importUrl, importBing
+      })
+    ]
+  } else if (tab === 'appearance') {
+    content = [
+      section(text('主题与玻璃颜色', 'Theme and glass colours'), text('Hermes 原生主题仍在设置中管理；这里只控制插件外观。', 'Hermes still owns the native theme; this controls the plugin appearance.'), [
+        toggle('themeFollow', text('主题随壁纸', 'Follow wallpaper theme'),
+          text('从当前壁纸取样主色并更新 Hermes 强调色。', 'Samples the current wallpaper and updates the Hermes accent colour.')),
+        jsxs('div', { className: 'grid gap-3 sm:grid-cols-3', children: [
+          jsxs('label', { className: 'flex items-center justify-between gap-2 text-xs text-foreground', children: [
+            jsx('span', { children: text('强调色', 'Accent colour') }),
+            jsx('input', {
+              type: 'color', value: config.accent,
+              onChange: event => controller.changeConfig({ accent: event.target.value }),
+              className: 'h-7 w-10 rounded border border-border bg-transparent'
+            })
+          ] }),
+          jsxs('label', { className: 'flex items-center justify-between gap-2 text-xs text-foreground', children: [
+            jsx('span', { children: text('浅色玻璃色', 'Light glass colour') }),
+            jsx('input', {
+              type: 'color', value: config.glassColor.light,
+              onChange: event => controller.changeConfig({
+                glassColor: { ...config.glassColor, light: event.target.value }
+              }),
+              className: 'h-7 w-10 rounded border border-border bg-transparent'
+            })
+          ] }),
+          jsxs('label', { className: 'flex items-center justify-between gap-2 text-xs text-foreground', children: [
+            jsx('span', { children: text('深色玻璃色', 'Dark glass colour') }),
+            jsx('input', {
+              type: 'color', value: config.glassColor.dark,
+              disabled: !config.glassDarkSeparate,
+              onChange: event => controller.changeConfig({
+                glassColor: { ...config.glassColor, dark: event.target.value }
+              }),
+              className: 'h-7 w-10 rounded border border-border bg-transparent disabled:opacity-40'
+            })
+          ] })
+        ] }),
+        toggle('glassDarkSeparate', text('深色主题单独设置玻璃色', 'Separate dark-theme glass colour'))
+      ]),
+      section(text('壁纸画面', 'Wallpaper image'), text('亮度、对比度、饱和度、模糊、遮罩与取景。', 'Brightness, contrast, saturation, blur, veil and framing.'), [
+        jsxs('div', { className: 'grid gap-4 sm:grid-cols-2', children: [
+          slider('maskOcclusion', text('暗化遮罩', 'Wallpaper veil'), text('100% 完全遮住壁纸。', '100% fully hides the wallpaper.')),
+          slider('wallpaperBlur', t('wallpaperBlur'), t('wallpaperBlurDesc')),
+          slider('wallpaperOpacity', t('wallpaperOpacity'), t('wallpaperOpacityDesc')),
+          slider('backgroundBrightness', text('亮度', 'Brightness'), text('100% = 原图。', '100% = untouched.')),
+          slider('backgroundContrast', text('对比度', 'Contrast'), text('100% = 原图。', '100% = untouched.')),
+          slider('backgroundSaturate', text('饱和度', 'Saturation'), text('0% = 黑白。', '0% = greyscale.')),
+          slider('layerPositionX', text('水平位置', 'Horizontal position')),
+          slider('layerPositionY', text('垂直位置', 'Vertical position')),
+          slider('layerScale', text('画面缩放', 'Layer scale'))
+        ] }),
+        toggle('wallpaperFlip', text('水平镜像', 'Horizontal mirror'))
+      ]),
+      section(t('sectionGlass'), t('sectionGlassDesc'), [
+        jsxs('div', { className: 'grid gap-4 sm:grid-cols-2', children: [
+          slider('panelGlass', t('panelGlass'), t('panelGlassDesc')),
+          slider('bubbleOpacity', t('bubbleOpacity'), t('bubbleOpacityDesc')),
+          slider('composerFrost', t('composerFrost'), t('composerFrostDesc')),
+          slider('surfaceFrost', t('surfaceFrost'), t('surfaceFrostDesc')),
+          slider('glassSaturation', t('glassSaturation'), t('glassSaturationDesc')),
+          slider('glassBorder', t('glassBorder'), t('glassBorderDesc')),
+          slider('glassFidelity', text('玻璃保真度', 'Glass fidelity'), text('越低越保留原始玻璃色，可读性下限越弱。', 'Lower values keep more of the raw glass colour and relax readability clamping.')),
+          slider('chatGlassFidelity', text('对话栏玻璃保真度', 'Conversation glass fidelity')),
+          slider('settingsWindowTransparency', text('设置窗透光度', 'Settings-window transparency')),
+          slider('settingsWindowBlur', text('设置窗模糊', 'Settings-window blur'))
+        ] }),
+        toggle('glassHighlight', t('glassHighlight'))
+      ]),
+      section(text('侧栏与标题栏', 'Sidebars and titlebar'), text('这些是 Hermes 原始结构面上的液态玻璃与圆角。', 'Liquid glass and corners on Hermes structural surfaces.'), [
+        toggle('leftSidebarGlass', text('左侧栏原生玻璃', 'Native left-sidebar glass')),
+        toggle('titlebarGlass', text('标题栏玻璃', 'Titlebar glass')),
+        toggle('sidebarGlass', text('侧栏玻璃', 'Sidebar glass')),
+        toggle('sidebarFollowGlobal', text('侧栏跟随全局玻璃参数', 'Sidebar follows global glass settings')),
+        !config.sidebarFollowGlobal && jsxs('div', { className: 'grid gap-4 sm:grid-cols-2', children: [
+          slider('sidebarBlur', text('侧栏模糊', 'Sidebar blur')),
+          slider('sidebarAlpha', text('侧栏透明度', 'Sidebar transparency')),
+          jsxs('label', { className: 'flex items-center justify-between gap-2 text-xs text-foreground', children: [
+            jsx('span', { children: text('侧栏玻璃色', 'Sidebar glass colour') }),
+            jsx('input', {
+              type: 'color', value: config.sidebarColor,
+              onChange: event => controller.changeConfig({ sidebarColor: event.target.value }),
+              className: 'h-7 w-10 rounded border border-border bg-transparent'
+            })
+          ] })
+        ] }),
+        jsxs('div', { className: 'grid gap-3 sm:grid-cols-2', children: [
+          select('leftSidebarCornerRadius', text('左侧栏圆角', 'Left-sidebar corners'), [
+            ['native', text('跟随原生', 'Native')], ['6', '6px'], ['12', '12px'], ['20', '20px']
+          ]),
+          select('rightSidebarCornerRadius', text('右侧栏圆角', 'Right-sidebar corners'), [
+            ['native', text('跟随原生', 'Native')], ['6', '6px'], ['12', '12px'], ['20', '20px']
+          ])
+        ] }),
+        jsxs('div', { className: 'grid gap-2 sm:grid-cols-2', children: [
+          toggle('leftSidebarSquareTL', text('左栏左上直角', 'Left top square')),
+          toggle('leftSidebarSquareTR', text('左栏右上直角', 'Left top-right square')),
+          toggle('leftSidebarSquareBR', text('左栏右下直角', 'Left bottom-right square')),
+          toggle('leftSidebarSquareBL', text('左栏左下直角', 'Left bottom-left square')),
+          toggle('rightSidebarSquareTL', text('右栏左上直角', 'Right top-left square')),
+          toggle('rightSidebarSquareTR', text('右栏右上直角', 'Right top-right square')),
+          toggle('rightSidebarSquareBR', text('右栏右下直角', 'Right bottom-right square')),
+          toggle('rightSidebarSquareBL', text('右栏左下直角', 'Right bottom-left square'))
         ] })
-    ] }),
-    jsxs('label', { className: 'flex flex-col gap-2 text-xs text-foreground', children: [
-      t('wallpaperSource'),
-      jsx(Input, { value: sourceDraft, disabled: Boolean(preview),
-        onChange: event => setSourceDraft(event.target.value), onBlur: commitSource,
-        onKeyDown: event => { if (event.key === 'Enter') commitSource() },
-        placeholder: t('wallpaperSourcePlaceholder'), 'aria-invalid': !customSourceValid }),
-      jsx('span', { className: 'text-[11px] text-muted-foreground', children: t('sourceCommitHint') }),
-      !customSourceValid && jsx('span', { className: 'text-destructive', children: t('invalidWallpaperSource') })
-    ] }),
-    slider('wallpaperBlur', t('wallpaperBlur'), t('wallpaperBlurDesc')),
-    slider('maskOcclusion', t('maskOcclusion'), t('maskOcclusionDesc')),
-    slider('wallpaperOpacity', t('wallpaperOpacity'), t('wallpaperOpacityDesc')),
-    slider('panelGlass', t('panelGlass'), t('panelGlassDesc')),
-    slider('bubbleOpacity', t('bubbleOpacity'), t('bubbleOpacityDesc')),
-    slider('composerFrost', t('composerFrost'), t('composerFrostDesc')),
-    slider('surfaceFrost', t('surfaceFrost'), t('surfaceFrostDesc')),
-    jsxs('label', { className: 'flex items-center justify-between gap-3 text-xs text-foreground', children: [
-      t('pauseOnHidden'),
-      jsx(Switch, { checked: config.pauseOnHidden, disabled: Boolean(preview),
-        'aria-label': t('pauseOnHidden'), onCheckedChange: value => controller.changeConfig({ pauseOnHidden: value }) })
-    ] }),
-    config.wallpaperType === 'video' && jsxs('div', { className: 'flex flex-col gap-3', children: [
-      jsxs('label', { className: 'flex items-center justify-between gap-3 text-xs text-foreground', children: [
-        t('wallpaperSound'),
-        jsx(Switch, { checked: config.wallpaperSound, disabled: Boolean(preview),
-          'aria-label': t('wallpaperSound'), onCheckedChange: value => controller.changeConfig({ wallpaperSound: value }) })
-      ] }),
-      slider('wallpaperVolume', t('wallpaperVolume'), t('wallpaperVolumeDesc'), !config.wallpaperSound)
-    ] })
-    ] }),
-    jsx(WallpaperEnginePanel, { store, controller, preview, prepareScene })
-  ] })
+      ]),
+      section(t('sectionTypography'), t('sectionTypographyDesc'), [
+        jsx(FontSettingsPanel, {
+          config, controller, fontList, loadingFonts: fontLoading, scanFonts
+        })
+      ])
+    ]
+  } else if (tab === 'effects') {
+    content = [
+      section(text('场景实时渲染', 'Live scene rendering'), t('sectionPlaybackDesc'), [
+        toggle('sceneLive', t('sceneLive'), t('sceneLiveDesc')),
+        jsxs('div', { className: 'grid gap-3 sm:grid-cols-2', children: [
+          select('sceneLiveFps', t('sceneLiveFps'), [
+            ['15', '15 fps'], ['30', '30 fps'], ['60', '60 fps']
+          ]),
+          select('sceneRenderDpr', t('sceneRenderDpr'), [
+            ['0', t('sceneRenderDprAuto')], ['1', '1x'], ['1.5', '1.5x'], ['2', '2x']
+          ]),
+          select('sceneVideoTexScale', t('sceneVideoTexScale'), [
+            ['0', t('sceneVideoTexScaleAuto')], ['0.5', t('sceneVideoTexScaleHalf')],
+            ['1', t('sceneVideoTexScaleFull')]
+          ]),
+          select('liveBootDelay', text('重启恢复等待', 'Restore wait'), [
+            [0, text('不等待', 'No wait')], [1, '1 s'], [3, '3 s'],
+            [5, '5 s'], [10, '10 s'], [30, '30 s']
+          ], text('只在重启恢复上次壁纸时生效。', 'Only applies when restoring the previous wallpaper after a restart.'))
+        ] }),
+        toggle('sceneAutoQuality', t('sceneAutoQuality'), t('sceneAutoQualityDesc'))
+      ]),
+      section(text('视频播放', 'Video playback'), text('视频壁纸与场景内嵌视频共用基础播放参数。', 'Shared by video wallpapers and embedded scene video.'), [
+        select('videoPlaybackRate', t('videoPlaybackRate'), [
+          [0.5, '0.5x'], [0.75, '0.75x'], [1, '1x'], [1.25, '1.25x'], [1.5, '1.5x'], [2, '2x']
+        ])
+      ]),
+      section(text('画面取景', 'Framing'), text('与 WE 的自由取景同一量程：位置 50 = 居中，缩放 100% = 原始大小。', 'Matches Wallpaper Engine free framing: 50 = centre, 100% = original size.'), [
+        jsxs('div', { className: 'grid gap-4 sm:grid-cols-3', children: [
+          slider('layerPositionX', text('水平位置', 'Horizontal position')),
+          slider('layerPositionY', text('垂直位置', 'Vertical position')),
+          slider('layerScale', text('缩放', 'Scale'))
+        ] }),
+        toggle('wallpaperFlip', text('水平镜像', 'Horizontal mirror'))
+      ])
+    ]
+  } else if (tab === 'audio') {
+    content = [
+      section(text('声音', 'Audio'), t('sectionPlaybackDesc'), [
+        toggle('wallpaperSound', t('wallpaperSound'),
+          text('视频壁纸、场景内嵌 MP4 与场景包内音频共用；关闭 = 静音但保留音量数值。', 'Shared by video wallpapers, embedded scene video and scene audio; off keeps the volume value.')),
+        slider('wallpaperVolume', t('wallpaperVolume'), t('wallpaperVolumeDesc'))
+      ]),
+      section(text('系统媒体信息', 'System media integration'), text('与上游一致，媒体集成和系统音频反应为常开；宿主不支持时自动降级。', 'Media integration and system audio response are always on, matching upstream; unsupported hosts fall back automatically.'), [
+        jsxs('div', { className: 'rounded-lg border border-border bg-background/50 p-3 text-xs', children: [
+          jsxs('div', { className: 'flex items-center justify-between gap-2', children: [
+            jsx('span', { className: 'font-medium text-foreground', children: text('Now Playing', 'Now Playing') }),
+            jsx('span', { className: nowPlaying?.ok ? 'text-emerald-600' : 'text-muted-foreground',
+              children: nowPlaying?.ok
+                ? (nowPlaying.playing || 'available')
+                : text('当前无可用媒体会话', 'No active media session') })
+          ] }),
+          nowPlaying?.ok && jsxs('div', { className: 'mt-2 space-y-0.5 text-muted-foreground', children: [
+            jsx('div', { className: 'text-foreground', children: nowPlaying.title || '—' }),
+            jsx('div', { children: [nowPlaying.artist, nowPlaying.album].filter(Boolean).join(' · ') || '—' }),
+            nowPlaying.duration > 0 && jsx('div', { className: 'font-mono',
+              children: `${Math.floor(nowPlaying.position || 0)} / ${Math.floor(nowPlaying.duration)} s` })
+          ] })
+        ] }),
+        jsxs('div', { className: 'text-[11px] leading-5 text-muted-foreground', children: [
+          text('系统音频反应：', 'System audio response: '),
+          jsx('span', { className: 'text-foreground', children: 'auto' }),
+          text(' · 媒体集成：', ' · Media integration: '),
+          jsx('span', { className: 'text-foreground', children: text('常开', 'always on') })
+        ] })
+      ])
+    ]
+  } else if (tab === 'advanced') {
+    content = [
+      section(text('浏览方式', 'Browsing'), text('壁纸库卡片的呈现方式。', 'How wallpaper cards are laid out.'), [
+        select('pickerLayout', text('紧凑布局', 'Compact layout'), PICKER_LAYOUTS.map(value => [value,
+          value === 'classic' ? text('经典比例卡片', 'Classic aspect-ratio cards')
+            : text('固定高度网格', 'Fixed-height grid')]))
+      ]),
+      section(text('省电', 'Power saving'), text('类似 Wallpaper Engine 的遮挡暂停；恢复后自动继续。', 'Wallpaper Engine-style pause rules; playback resumes automatically.'), [
+        toggle('pauseOnHidden', t('pauseOnHidden')),
+        toggle('pauseOnBlur', t('pauseOnBlur')),
+        toggle('pauseOnBattery', t('pauseOnBattery'))
+      ]),
+      section(text('缓存与诊断', 'Cache and diagnostics'), text('缓存可再生；这里只清理场景解包缓存，不删除壁纸原文件。', 'Caches are reproducible; this only clears extracted scene data, never source wallpapers.'), [
+        jsxs('div', { className: 'flex flex-wrap gap-2', children: [
+          jsx(Button, { size: 'sm', variant: 'outline', onClick: () => void refreshDiagnostics(),
+            disabled: diagnosticsLoading,
+            children: diagnosticsLoading ? '…' : text('刷新诊断', 'Refresh diagnostics') }),
+          jsx(Button, {
+            size: 'sm', variant: 'outline', onClick: () => void clearCache(),
+            children: cacheArmed ? text('确认清理场景缓存', 'Confirm scene-cache cleanup')
+              : text('清理场景缓存', 'Clear scene cache')
+          })
+        ] }),
+        cacheMessage && jsx('p', { className: 'text-[11px] text-muted-foreground', children: cacheMessage }),
+        diagnosticsError && jsx('p', { className: 'text-[11px] text-destructive', children: diagnosticsError }),
+        diagnostics?.ok && jsxs('div', { className: 'grid gap-3 md:grid-cols-2', children: [
+          jsxs('div', { className: 'space-y-1 rounded-lg border border-border bg-background/50 p-3 text-[11px] text-muted-foreground', children: [
+            jsx('div', { className: 'text-xs font-medium text-foreground', children: text('运行状态', 'Runtime') }),
+            jsx('div', { children: `WebWallGL: ${diagnostics.webwallgl ? 'OK' : 'missing'}` }),
+            jsx('div', { children: `Node.js: ${diagnostics.node || '—'}` }),
+            jsx('div', { children: `${text('系统字体缓存', 'System fonts')}: ${diagnostics.fonts || 0}` })
+          ] }),
+          jsxs('div', { className: 'space-y-1 rounded-lg border border-border bg-background/50 p-3 text-[11px] text-muted-foreground', children: [
+            jsx('div', { className: 'text-xs font-medium text-foreground', children: text('占用', 'Storage') }),
+            jsx('div', { children: `${text('上传', 'Uploads')}: ${bytes(diagnostics.sizes?.uploads)}` }),
+            jsx('div', { children: `${text('场景缓存', 'Scene cache')}: ${bytes(diagnostics.sizes?.sceneCache)}` }),
+            jsx('div', { className: 'break-all', children: diagnostics.paths?.data || '—' })
+          ] })
+        ] }),
+        diagnostics?.logs?.length > 0 && jsxs('details', { className: 'rounded-lg border border-border bg-background/50 p-3', children: [
+          jsx('summary', { className: 'cursor-pointer text-xs font-medium text-foreground',
+            children: text('最近日志', 'Recent logs') }),
+          ...diagnostics.logs.map(log => jsxs('div', { className: 'mt-2', children: [
+            jsx('div', { className: 'text-[11px] font-medium text-foreground', children: `${log.name} · ${bytes(log.size)}` }),
+            jsx('pre', { className: 'mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all text-[10px] text-muted-foreground',
+              children: (log.tail || []).slice(-40).join('\n') })
+          ] }, log.name))
+        ] })
+      ]),
+      section(t('sectionSystem'), t('sectionSystemDesc'), [
+        jsxs('div', { className: 'flex flex-wrap items-center gap-2', children: [
+          jsx(Button, { size: 'sm', variant: 'outline', onClick: exportPreset, children: t('exportPreset') }),
+          jsx('label', {
+            className: 'inline-flex cursor-pointer items-center rounded-md border border-border px-3 py-1.5 text-xs text-foreground hover:bg-accent/50',
+            children: [
+              t('importPreset'),
+              jsx('input', { type: 'file', accept: 'application/json,.json', className: 'hidden',
+                onChange: event => void importPreset(event) })
+            ]
+          })
+        ] }),
+        presetMessage && jsx('p', { className: 'text-[11px] text-muted-foreground', children: presetMessage })
+      ])
+    ]
+  } else if (tab === 'extensions') {
+    content = [
+      section(t('sectionFx'), t('sectionFxDesc'), [
+        toggle('fxEnabled', t('fxEnabled')),
+        config.fxEnabled && jsxs('div', { className: 'flex flex-col gap-4', children: [
+          toggle('fxClick', t('fxClick')),
+          select('fxClickStyle', t('fxClickStyle'), FX_CLICK_STYLES.map(value => [value, {
+            ripple: text('波纹', 'Ripple'), spark: text('火花', 'Spark'), both: text('两者一起', 'Both')
+          }[value]])),
+          jsxs('div', { className: 'grid gap-3 sm:grid-cols-2', children: [
+            slider('fxClickSize', t('fxClickSize')),
+            slider('fxClickGlow', t('fxClickGlow'))
+          ] }),
+          toggle('fxTrail', t('fxTrail')),
+          select('fxTrailStyle', t('fxTrailStyle'), FX_TRAIL_STYLES.map(value => [value, {
+            comet: text('彗尾', 'Comet'), dust: text('星尘', 'Dust')
+          }[value]])),
+          jsxs('div', { className: 'grid gap-3 sm:grid-cols-2', children: [
+            slider('fxTrailLength', t('fxTrailLength')),
+            slider('fxTrailWidth', t('fxTrailWidth')),
+            slider('fxTrailGlow', t('fxTrailGlow')),
+            slider('fxOpacity', t('fxOpacity'))
+          ] }),
+          jsxs('div', { className: 'grid gap-3 sm:grid-cols-2', children: [
+            select('fxBlend', t('fxBlend'), FX_BLEND_VALUES.map(value => [value, {
+              screen: text('滤色', 'Screen'), normal: text('正常', 'Normal'),
+              overlay: text('叠加', 'Overlay'), multiply: text('正片叠底', 'Multiply'),
+              lighten: text('变亮', 'Lighten')
+            }[value]])),
+            select('fxColorMode', t('fxColorMode'), FX_COLOR_MODES.map(value => [value, {
+              accent: text('主题色', 'Accent'), rainbow: text('彩虹', 'Rainbow'),
+              custom: text('自定义', 'Custom')
+            }[value]]))
+          ] }),
+          config.fxColorMode === 'custom' && jsxs('label', {
+            className: 'flex items-center justify-between gap-3 text-xs text-foreground',
+            children: [
+              jsx('span', { children: t('fxColor') }),
+              jsx('input', {
+                type: 'color', value: config.fxColor,
+                onChange: event => controller.changeConfig({ fxColor: event.target.value }),
+                className: 'h-7 w-10 rounded border border-border bg-transparent'
+              })
+            ]
+          })
+        ] })
+      ]),
+      section(t('sectionParallax'), t('sectionParallaxDesc'), [
+        toggle('parallaxEnabled', t('parallaxEnabled')),
+        config.parallaxEnabled && jsxs('div', { className: 'flex flex-col gap-4', children: [
+          slider('parallaxBg', t('parallaxBgDepth'), text('光标到屏幕角落时的最大位移，单位 = 屏幕最长对角线的百分比。', 'Maximum travel when the cursor reaches a screen corner, as a percentage of the longest diagonal.')),
+          toggle('parallaxUi', t('parallaxUi')),
+          config.parallaxUi && jsxs('div', { className: 'grid gap-3 sm:grid-cols-2', children: [
+            slider('parallaxUiChatDepth', t('parallaxUiChat')),
+            slider('parallaxUiComposerDepth', t('parallaxUiComposer')),
+            slider('parallaxUiSidebarDepth', t('parallaxUiSidebar')),
+            slider('parallaxUiBubbleDepth', text('用户气泡深度', 'User bubble depth'))
+          ] }),
+          toggle('parallaxPlugin', text('其他插件前端视差', 'Other plugin surfaces'),
+            text('独立于界面视差；默认关闭。', 'Independent of UI parallax; off by default.')),
+          config.parallaxPlugin && jsxs('div', { className: 'space-y-2', children: [
+            discoveredSlots.length === 0 && jsx('p', { className: 'text-[11px] text-muted-foreground',
+              children: text('尚未发现可移动的插件前端组。', 'No movable plugin surface has been discovered yet.') }),
+            ...discoveredSlots.map(slot => jsxs('label', {
+              className: 'flex items-center justify-between gap-3 rounded-md border border-border bg-background/40 px-2.5 py-2 text-xs',
+              children: [
+                jsx('span', { className: 'min-w-0 truncate text-foreground', children: slot }),
+                jsx('input', {
+                  type: 'number', min: 0, max: 10, step: 0.1,
+                  value: config.parallaxPluginDepths?.[slot] ?? 1,
+                  onChange: event => controller.scheduleConfig({
+                    parallaxPluginDepths: {
+                      ...config.parallaxPluginDepths,
+                      [slot]: Number(event.target.value)
+                    }
+                  }),
+                  onBlur: () => controller.flushConfig(),
+                  className: 'w-20 rounded border border-border bg-background px-2 py-1 text-xs'
+                })
+              ]
+            }, slot))
+          ] }),
+          slider('parallaxSmooth', t('parallaxSmooth'), text('0 = 立刻跟手，越大越柔和。', '0 = instant, higher = softer.'))
+        ] })
+      ])
+    ]
+  } else {
+    content = [
+      section(text('项目简介', 'About this plugin'), null, [
+        jsxs('div', { className: 'space-y-2 text-xs leading-6 text-muted-foreground', children: [
+          jsx('p', { className: 'text-sm font-medium text-foreground',
+            children: text('Hermes 壁纸引擎 · 让 Hermes 的背后动起来', 'Hermes Wallpaper Engine · bring the background to life') }),
+          jsx('p', { children: text(
+            '把 Wallpaper Engine 的 Scene、Web、视频与图片壁纸放到 Hermes 背后，再配上一整套液态玻璃、字体、点击拖尾与 3D 视差。插件不向 agent 注册工具，也不注入提示文本，因此不增加模型 token 开销。',
+            'Bring Wallpaper Engine Scene, Web, video and image wallpapers behind Hermes, with liquid glass, typography, click/trail effects and 3D parallax. The plugin registers no agent tools or prompt text, so it adds no model token overhead.'
+          ) })
+        ] })
+      ]),
+      section(text('版本与上游', 'Version and upstream'), null, [
+        jsxs('div', { className: 'space-y-2 text-xs text-muted-foreground', children: [
+          jsx('div', { children: `Hermes Wallpaper Engine 2.0.0` }),
+          jsx('div', { children: text('适配上游 dsh-wallpaper-engine 1.4.2（fd3e01f）', 'Adapted from dsh-wallpaper-engine 1.4.2 (fd3e01f)') }),
+          jsx('div', { children: 'WebWallGL 3.0.1 · MIT · oneincase' }),
+          jsx('p', { className: 'leading-5', children: text(
+            '本项目按 MIT 及其随附的第三方许可分发。壁纸、角色与字体素材的授权可能与代码不同；再分发或商用前请核对来源。',
+            'Distributed under MIT and the accompanying third-party licences. Wallpaper, character and font assets may use different terms; check their sources before redistribution or commercial use.'
+          ) })
+        ] }),
+        jsxs('div', { className: 'flex flex-wrap gap-2', children: [
+          jsx('a', {
+            href: 'https://github.com/CaptainMusX/hermes-skins',
+            target: '_blank', rel: 'noopener noreferrer',
+            className: 'rounded-md border border-border px-3 py-1.5 text-xs text-foreground hover:bg-accent/50',
+            children: text('Hermes 插件仓库', 'Hermes plugin repository')
+          }),
+          jsx('a', {
+            href: 'https://github.com/elysia395/dsh-wallpaper-engine',
+            target: '_blank', rel: 'noopener noreferrer',
+            className: 'rounded-md border border-border px-3 py-1.5 text-xs text-foreground hover:bg-accent/50',
+            children: text('上游 DSH 项目', 'Upstream DSH project')
+          })
+        ] })
+      ]),
+      section(text('许可与致谢', 'Licences and credits'), null, [
+        jsx('ul', { className: 'list-disc space-y-1 pl-5 text-[11px] leading-5 text-muted-foreground', children: [
+          jsx('li', { children: text('dsh-wallpaper-engine：壁纸渲染生命周期、设置与交互设计参考（MIT）', 'dsh-wallpaper-engine: renderer lifecycle, settings and interaction reference (MIT)') }),
+          jsx('li', { children: text('WebWallGL：Scene / Web 实时渲染引擎（MIT，oneincase）', 'WebWallGL: live Scene / Web renderer (MIT, oneincase)') }),
+          jsx('li', { children: text('dsh-skins：早期 Scene 解包兼容层（MIT）', 'dsh-skins: legacy scene extraction compatibility (MIT)') })
+        ] })
+      ])
+    ]
+  }
 
   return jsxs('div', {
     'data-hermes-skins-page': '',
-    ref: scrollRef,
-    className: 'h-full w-full overflow-y-auto p-5 md:p-8',
-    onScroll: event => { viewMemory[tab] = event.currentTarget.scrollTop },
+    className: 'mx-auto flex w-full max-w-6xl flex-col gap-4 p-2 md:p-4',
     children: [
-    jsxs('header', { className: 'mb-5 flex flex-wrap items-center justify-between gap-4 border-b border-border pb-4', children: [
-      jsxs('div', { children: [
-        jsx('h1', { className: 'text-2xl font-bold text-foreground', children: t('pluginName') }),
+      jsx('header', { className: 'space-y-1', children: [
+        jsx('h1', { className: 'text-lg font-semibold text-foreground', children: t('pluginName') }),
         jsx('p', { className: 'text-xs text-muted-foreground', children: t('pluginDesc') })
       ] }),
-      jsx(SegmentedControl, { value: tab, onChange: setTab, options: [
-        { id: 'gallery', label: t('tabGallery') },
-        { id: 'wallpaper', label: t('tabWallpaper') },
-        { id: 'studio', label: t('tabStudio') }
-      ] })
-    ] }),
-    jsx(TryOnBanner, { store, onApply: () => preview && controller.apply(preview, theme),
-      onExit: () => controller.exitTryOn(theme) }),
-    tab === 'gallery' ? gallery : tab === 'wallpaper' ? wallpaper :
-      jsx(CustomThemeStudio, { store, onApplySkin: skin => controller.apply(skin, theme) })
-  ] })
+      tabBar,
+      jsx('div', { role: 'tabpanel', className: 'flex flex-col gap-4', children: content }),
+      tabFooter
+    ]
+  })
 }
+return { AppearanceSettingsPanel }
+})()
+
+// ─── Submodule: Appearance settings entry ─────────────────────
+const { mountAppearanceEntry } = (() => {
+/**
+ * The Appearance page renders plugin extras only on its root view, while the
+ * rail always lands on the first subpage (General). Mount a small, plugin-owned
+ * entry card at the end of General so Settings ▸ Appearance has a visible door
+ * to the full Wallpaper Engine page. The card is removed as soon as the
+ * General section leaves the DOM.
+ */
+const CARD_ID = 'hermes-skins-appearance-entry'
+
+const isChinese = () => {
+  const language = typeof document !== 'undefined'
+    ? document.documentElement.lang || navigator.language || '' : ''
+  return String(language).toLowerCase().startsWith('zh')
+}
+
+function isGeneralAppearance() {
+  if (typeof location === 'undefined') return false
+  const query = location.hash.split('?')[1] || ''
+  const params = new URLSearchParams(query)
+  return params.get('page') === 'general' && params.get('tab') === 'config:appearance'
+}
+
+function mountAppearanceEntry({ getSummary, open }) {
+  if (typeof document === 'undefined' || typeof MutationObserver !== 'function') return () => {}
+  let card = null
+  let timer = null
+  let disposed = false
+
+  const remove = () => {
+    card?.remove()
+    card = null
+  }
+
+  const sync = () => {
+    if (disposed) return
+    if (!isGeneralAppearance()) {
+      remove()
+      return
+    }
+    const container = document.getElementById('setting-field-appearance.language')?.closest('.overflow-y-auto')
+    if (!container) {
+      remove()
+      return
+    }
+    if (card?.isConnected && card.parentElement === container) return
+    remove()
+    card = document.createElement('section')
+    card.id = CARD_ID
+    card.setAttribute('data-hermes-skins-surface', '')
+    card.className = 'mt-6 flex flex-col gap-3 rounded-xl border border-border bg-card p-5'
+
+    const title = document.createElement('h3')
+    title.className = 'text-sm font-semibold text-foreground'
+    title.textContent = isChinese() ? '壁纸引擎' : 'Wallpaper Engine'
+    const summary = document.createElement('p')
+    summary.className = 'text-xs text-muted-foreground'
+    summary.textContent = getSummary?.() ||
+      (isChinese() ? 'Scene / Web / 视频 / 图片壁纸与液态玻璃。' : 'Scene, Web, video and image wallpapers with liquid glass.')
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'w-fit rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90'
+    button.textContent = isChinese() ? '打开壁纸引擎' : 'Open Wallpaper Engine'
+    button.addEventListener('click', () => open?.())
+    card.append(title, summary, button)
+    container.appendChild(card)
+  }
+
+  const schedule = () => {
+    if (timer !== null || disposed) return
+    timer = setTimeout(() => {
+      timer = null
+      sync()
+    }, 80)
+  }
+
+  const observer = new MutationObserver(schedule)
+  observer.observe(document.body, { childList: true, subtree: true })
+  schedule()
+  return () => {
+    disposed = true
+    observer.disconnect()
+    if (timer !== null) clearTimeout(timer)
+    timer = null
+    remove()
+  }
+}
+return { mountAppearanceEntry }
+})()
 
 // ─── Plugin Registration Entry ────────────────────────────────
 const PLUGIN_ID = 'hermes-skins'
 
 export default {
   id: PLUGIN_ID,
-  name: 'Hermes Skin Center',
+  name: 'Hermes Wallpaper Engine',
   defaultEnabled: true,
 
   register(ctx) {
+    const rest = typeof ctx.rest === 'function'
+      ? (path, options) => ctx.rest(path, options)
+      : async () => ({ ok: false, error: 'plugin backend unavailable' })
     // 1. Register I18N
     ctx.i18n.register(I18N_DICTIONARY)
 
     // 2. Initialize engines & state
-    const store = createSkinStore(ctx)
-    const backdropManager = new BackdropManager({
-      prepareScene: dir => ctx.rest('/scene/prepare', { method: 'POST', body: { dir } })
-    })
+    const store = createAppearanceStore(ctx)
+    const openScene = payload => rest('/scene/open', { method: 'POST', body: payload })
+    const backdropManager = new BackdropManager({ openScene })
     const glassController = new GlassController()
     const rangeController = new RangeController()
     rangeController.start()
-    const controller = new SkinController(store, BUILTIN_SKINS, backdropManager, glassController)
+    const fontController = new FontController({ setAccentOverride })
+    const fxOverlay = new FxOverlay()
+    const parallax = new ParallaxController()
+    const themeFollow = new ThemeFollowController()
+    const controller = new AppearanceController(store, backdropManager, glassController,
+      [fontController, fxOverlay, parallax, themeFollow])
+    const rotation = new WallpaperRotation(store, openScene, controller, backdropManager)
 
-    // 3. Register themes to core THEMES_AREA
-    for (const skin of BUILTIN_SKINS) {
-      ctx.register({
-        id: `theme-${skin.id}`,
-        area: THEMES_AREA,
-        data: toThemeContribution(skin)
+    const loadFonts = () => rest('/fonts')
+    const loadUploads = () => rest('/uploads')
+    const importUploads = paths => rest('/uploads/import', { method: 'POST', body: { paths } })
+    const importUrl = url => rest('/uploads/url', { method: 'POST', body: { url } })
+    const importBing = () => rest('/uploads/bing', { method: 'POST', body: { index: 0 } })
+    const loadDiagnostics = () => rest('/system/diagnostics')
+    const clearSceneCache = () => rest('/system/cache/clear', { method: 'POST', body: { scope: 'scene' } })
+    const loadNowPlaying = () => rest('/now-playing')
+    let nowPlayingBusy = false
+    const refreshNowPlaying = async () => {
+      const current = store.$config.get()
+      if (!['scene', 'web'].includes(current.wallpaperType)) {
+        backdropManager.setMediaSnapshot(null)
+        return
+      }
+      if (nowPlayingBusy) return
+      nowPlayingBusy = true
+      try {
+        backdropManager.setMediaSnapshot(await loadNowPlaying())
+      } catch {
+        backdropManager.setMediaSnapshot(null)
+      } finally {
+        nowPlayingBusy = false
+      }
+    }
+    const stopNowPlayingPoll = typeof ctx.setInterval === 'function'
+      ? ctx.setInterval(() => void refreshNowPlaying(), 5000)
+      : null
+    void refreshNowPlaying()
+    const panel = () => jsx(AppearanceSettingsPanel, {
+      store, controller, openScene, loadFonts, loadUploads, importUploads, importUrl,
+      importBing, loadDiagnostics, clearSceneCache, loadNowPlaying
+    })
+    const openPanel = () => {
+      try { host.navigate(pluginSettingsHref('hermes-skins:wallpaper')) }
+      catch { host.navigate('/settings?tab=plugins') }
+    }
+
+    // 3. The full page lives in Settings ▸ Plugins; the Appearance rail shows
+    //    a small door at the end of its General section. Both are removed with
+    //    the plugin. appearance.extra remains for hosts that render the
+    //    Appearance root view.
+    if (typeof ctx.registerSettingsPage === 'function') {
+      ctx.registerSettingsPage({
+        id: 'wallpaper',
+        title: '壁纸引擎',
+        icon: 'symbol-color',
+        order: 20,
+        render: panel
       })
     }
-    for (const skin of store.$config.get().customSkins) {
-      ctx.register({ id: `theme-${skin.id}`, area: THEMES_AREA, data: toThemeContribution(skin) })
-    }
-
-    // 4. Register Full Page Route (/skins)
     ctx.register({
-      id: 'page',
-      area: ROUTES_AREA,
-      data: { path: '/skins' },
-      render: () => jsx(SkinCenterPage, { store, controller,
-        prepareScene: dir => ctx.rest('/scene/prepare', { method: 'POST', body: { dir } }) })
+      id: 'appearance-panel',
+      area: APPEARANCE_AREAS.extra,
+      render: panel
+    })
+    const disposeAppearanceEntry = mountAppearanceEntry({
+      getSummary: () => {
+        const config = store.$config.get()
+        return config.weSelection?.title ||
+          config.wallpaperSource.split(/[\\/]/).filter(Boolean).at(-1) ||
+          'Scene / Web / 视频 / 图片壁纸与液态玻璃。'
+      },
+      open: openPanel
     })
 
-    // 5. Register Sidebar Navigation Entry
-    ctx.register({
-      id: 'sidebar-nav',
-      area: SIDEBAR_NAV_AREA,
-      order: 85,
-      data: {
-        path: '/skins',
-        label: '皮肤中心',
-        codicon: 'symbol-color'
-      }
-    })
+    // 4. Runtime theme watcher keeps the veil/surface mode in sync with Hermes.
+    const disposeThemeWatcher = watchRootTheme(controller)
+    controller.sync()
 
-    // 6. Runtime theme watcher. The old status-bar chip carried this sync in a
-    //    React effect; the watcher runs independent of any page or status-bar
-    //    visibility, watches only the root theme attributes, and is disposed
-    //    with the plugin. The bottom bar keeps no skin entry at all — the skin
-    //    center page and the command palette remain the entries.
-    const disposeThemeWatcher = watchRootTheme(store, controller)
-
-    // 7. Register Command Palette actions
-    ctx.register({
-      id: 'cmd-open-skins',
-      area: PALETTE_AREA,
-      data: {
-        id: 'hermes-skins.open-gallery',
-        title: 'Skin Center: Open Gallery / 皮肤中心: 打开画廊',
-        keywords: ['skin', 'theme', 'wallpaper', 'gallery', '换肤', '皮肤', '壁纸'],
-        run: () => host.navigate('/skins')
-      }
-    })
-
-    ctx.register({
-      id: 'cmd-toggle-wallpaper',
-      area: PALETTE_AREA,
-      data: {
-        id: 'hermes-skins.toggle-wallpaper',
-        title: 'Skin Center: Toggle Wallpaper / 皮肤中心: 切换壁纸开关',
-        keywords: ['skin', 'wallpaper', 'toggle', '壁纸'],
-        run: () => {
-          const next = !store.$config.get().wallpaperEnabled
-          controller.changeConfig({ wallpaperEnabled: next })
-          host.notify({
-            kind: 'info',
-            message: next ? 'Custom wallpaper enabled' : 'Custom wallpaper disabled'
-          })
-        }
-      }
-    })
-
-    // Hermes owns the selected theme. A stored plugin selection never overrides it.
-    if (typeof document !== 'undefined') {
-      controller.sync(document.documentElement.dataset.hermesTheme || null,
-        document.documentElement.dataset.hermesMode || 'dark')
-    }
-
-    // 9. Teardown on plugin reload / dispose: backdrop DOM, runtime CSS, the
-    //    composer frost layer and the theme watcher all release together.
+    // 5. Teardown on plugin reload / dispose.
     if (typeof ctx.onDispose === 'function') {
       ctx.onDispose(() => {
         disposeThemeWatcher()
+        disposeAppearanceEntry()
+        if (typeof stopNowPlayingPoll === 'function') stopNowPlayingPoll()
+        rotation.destroy()
         rangeController.destroy()
         controller.destroy()
         store.destroy()

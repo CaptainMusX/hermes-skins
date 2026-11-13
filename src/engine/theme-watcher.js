@@ -20,14 +20,10 @@
  */
 const THEME_ATTRS = ['class', 'data-hermes-mode', 'data-hermes-theme', 'data-hermes-terminal-alpha']
 
-export function watchRootTheme(store, controller) {
+export function watchRootTheme(controller) {
   if (typeof document === 'undefined' || typeof MutationObserver !== 'function') return () => {}
   const root = document.documentElement
-  const stateKey = () => {
-    const previewing = Boolean(store.$tryOnSkin.get())
-    const themeName = previewing ? '~preview' : (root.dataset.hermesTheme || null)
-    return `${themeName}:${root.dataset.hermesMode || 'dark'}:${root.dataset.hermesTerminalAlpha || 'false'}`
-  }
+  const stateKey = () => `${root.dataset.hermesMode || 'dark'}:${root.dataset.hermesTerminalAlpha || 'false'}`
 
   let queued = false
   let disposed = false
@@ -39,9 +35,7 @@ export function watchRootTheme(store, controller) {
     const key = stateKey()
     if (key === lastKey) return
     lastKey = key
-    const previewing = Boolean(store.$tryOnSkin.get())
-    controller.sync(previewing ? undefined : (root.dataset.hermesTheme || null),
-      root.dataset.hermesMode || 'dark')
+    controller.sync()
   }
 
   const observer = new MutationObserver(() => {

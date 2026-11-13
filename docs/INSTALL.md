@@ -16,16 +16,16 @@ Private repositories require access credentials on the target device. An existin
 
 This fallback requires Node.js 22+ to run its installer.
 
-1. Extract the built ZIP and open its `hermes-skins-v1.3.4` folder.
+1. Extract the built ZIP and open its `hermes-skins-v2.0.0` folder.
 2. Run `install.cmd`, or run `node scripts/install-local.js` from that folder. No npm dependency installation or build is needed.
 3. Run **Reload desktop plugins** in Hermes. Restart the gateway after the first installation of the scene backend.
-4. Open **Skin Center** and select your theme and wallpaper.
+4. Open **Settings → Appearance → General**, click **Open Wallpaper Engine** at the bottom, then select a wallpaper.
 
 Set `HERMES_HOME` before installing if you use a custom data directory. The installer validates the payload first and backs up existing files beside them as `.bak-*`.
 
-`--frontend-only` installs themes, glass styling, and basic wallpaper support without the scene backend. `--no-enable` deploys all files but leaves backend activation to the administrator; run `hermes plugins enable hermes-skins` and restart the gateway afterwards.
+`--frontend-only` installs glass styling and basic wallpaper support without the scene backend. `--no-enable` deploys all files but leaves backend activation to the administrator; run `hermes plugins enable hermes-skins` and restart the gateway afterwards.
 
-The archive contains no user settings, accounts, chats, Steam wallpapers, or scene caches. Choose the same built-in skin on the new device, or export the **current Theme Studio form** as JSON and import/save it on the target. This is not a full settings export: copy transparency/blur values manually, copy your own media separately, and update paths. Re-select Wallpaper Engine projects from the target device's own library.
+The archive contains no user settings, accounts, chats, Steam wallpapers, or scene caches. Use **Advanced → System → Export preset** to move glass, playback, typography, rotation and FX/parallax settings; presets intentionally omit wallpaper paths and local media. Copy your own media separately and re-select Wallpaper Engine projects from the target device's own library.
 
 True terminal transparency requires the included optional host-source patch and a compatible Hermes rebuild. The plugin installer does not patch the Hermes executable.
 

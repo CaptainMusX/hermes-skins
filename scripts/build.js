@@ -10,25 +10,27 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const rootDir = path.resolve(__dirname, '..')
 
 const i18nCode = fs.readFileSync(path.join(rootDir, 'src/i18n.js'), 'utf8')
-const catalogCode = fs.readFileSync(path.join(rootDir, 'src/catalog/builtin-skins.js'), 'utf8')
 const backdropCode = fs.readFileSync(path.join(rootDir, 'src/engine/backdrop-manager.js'), 'utf8')
 const glassCode = fs.readFileSync(path.join(rootDir, 'src/engine/glass-controller.js'), 'utf8')
 const rangeCode = fs.readFileSync(path.join(rootDir, 'src/engine/range-controller.js'), 'utf8')
 const configCode = fs.readFileSync(path.join(rootDir, 'src/engine/config.js'), 'utf8')
-const contrastCode = fs.readFileSync(path.join(rootDir, 'src/engine/color-contrast.js'), 'utf8')
 const storageCode = fs.readFileSync(path.join(rootDir, 'src/engine/storage-manager.js'), 'utf8')
-const controllerCode = fs.readFileSync(path.join(rootDir, 'src/engine/skin-controller.js'), 'utf8')
+const appearanceControllerCode = fs.readFileSync(path.join(rootDir, 'src/engine/appearance-controller.js'), 'utf8')
+const fontControllerCode = fs.readFileSync(path.join(rootDir, 'src/engine/font-controller.js'), 'utf8')
+const fxOverlayCode = fs.readFileSync(path.join(rootDir, 'src/engine/fx-overlay.js'), 'utf8')
+const parallaxCode = fs.readFileSync(path.join(rootDir, 'src/engine/parallax-controller.js'), 'utf8')
+const themeFollowCode = fs.readFileSync(path.join(rootDir, 'src/engine/theme-follow-controller.js'), 'utf8')
 const watcherCode = fs.readFileSync(path.join(rootDir, 'src/engine/theme-watcher.js'), 'utf8')
 const weLibraryCode = fs.readFileSync(path.join(rootDir, 'src/engine/we-library.js'), 'utf8')
-const sceneCode = fs.readFileSync(path.join(rootDir, 'src/engine/scene-player.js'), 'utf8')
+const wallpaperApplyCode = fs.readFileSync(path.join(rootDir, 'src/engine/wallpaper-apply.js'), 'utf8')
+const rotationCode = fs.readFileSync(path.join(rootDir, 'src/engine/rotation-controller.js'), 'utf8')
 const sceneBackendCode = fs.readFileSync(path.join(rootDir, 'src/engine/scene-backend.js'), 'utf8')
-const webCode = fs.readFileSync(path.join(rootDir, 'src/engine/web-player.js'), 'utf8')
-const playerCode = fs.readFileSync(path.join(rootDir, 'third_party/dsh-skins/we-player-source.ts'), 'utf8')
-const shimCode = fs.readFileSync(path.join(rootDir, 'third_party/dsh-skins/we-shim-source.ts'), 'utf8')
-const tryOnBannerCode = fs.readFileSync(path.join(rootDir, 'src/ui/TryOnBanner.js'), 'utf8')
-const studioCode = fs.readFileSync(path.join(rootDir, 'src/ui/CustomThemeStudio.js'), 'utf8')
+const sceneLiveCode = fs.readFileSync(path.join(rootDir, 'src/engine/scene-live.js'), 'utf8')
 const wePanelCode = fs.readFileSync(path.join(rootDir, 'src/ui/WallpaperEnginePanel.js'), 'utf8')
-const pageCode = fs.readFileSync(path.join(rootDir, 'src/ui/SkinCenterPage.js'), 'utf8')
+const rotationEditorCode = fs.readFileSync(path.join(rootDir, 'src/ui/RotationGroupEditor.js'), 'utf8')
+const fontSettingsCode = fs.readFileSync(path.join(rootDir, 'src/ui/FontSettingsPanel.js'), 'utf8')
+const appearanceSettingsCode = fs.readFileSync(path.join(rootDir, 'src/ui/AppearanceSettingsPanel.js'), 'utf8')
+const appearanceEntryCode = fs.readFileSync(path.join(rootDir, 'src/ui/appearance-entry.js'), 'utf8')
 
 // Clean internal imports & exports from submodules
 function stripImportsAndExports(code) {
@@ -39,40 +41,41 @@ function stripImportsAndExports(code) {
     .trim()
 }
 
+function moduleScope(code, exportNames) {
+  const names = exportNames.join(', ')
+  return `const { ${names} } = (() => {\n${stripImportsAndExports(code)}\nreturn { ${names} }\n})()`
+}
+
 const bundled = `/**
- * Hermes Skin Center (hermes-skins)
+ * Hermes Wallpaper Engine (hermes-skins)
  * Version: ${JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8')).version}
- * Author: CaptainMusX (inspired by dsh-skins)
+ * Author: CaptainMusX
  * 
  * Standalone Desktop Plugin for Hermes Desktop.
- * Provides skin gallery, custom wallpaper/video engine, glassmorphism translucency,
- * try-on/apply workflows, and theme studio.
+ * Provides the Wallpaper Engine library, Scene/Web/video/image rendering and
+ * liquid-glass surfaces, exposed from Settings ▸ Appearance.
  *
- * Third-party portions: dsh-skins, pinned at 82f42bd3bf91ea88475e59a2753f87041a960a56.
- * Copyright (c) 2026, zhu1090093659; historical notice: dsh-external contributors.
- * Changes in this generated file: vendor imports/exports removed and modules concatenated;
- * Local vendor changes add cursor/X-ray/shake support, remove cursor ripples, and bound
- * rendering/resource lifecycles, compile shaders on demand, reuse video allocations,
- * and track decoded frames. Additional Hermes adapters live in project-owned modules.
+ * Third-party portions: WebWallGL 3.0.1 (MIT, oneincase), the renderer page and
+ * layer/pointer/pause lifecycle adapted from dsh-wallpaper-engine (MIT, elysia395),
+ * and the legacy dsh-skins parser vendored for compatibility (82f42bd3).
+ * Changes in this generated file: third-party imports/exports removed and modules
+ * concatenated; scene rendering moved to the signed WebWallGL media origin.
  * See LICENSING.md, THIRD-PARTY-NOTICES.md and the accompanying complete license texts.
  */
 
 import {
-  atom, Badge, Button, host, Input,
-  PALETTE_AREA, ROUTES_AREA, SegmentedControl, SIDEBAR_NAV_AREA,
-  Switch, THEMES_AREA,
-  usePluginI18n, useTheme, useValue
+  APPEARANCE_AREAS, atom, Button, host, Input, pluginSettingsHref, SegmentedControl, Switch,
+  setAccentOverride, usePluginI18n, useValue
 } from '@hermes/plugin-sdk'
-import { useState, useEffect, useLayoutEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 // ─── Submodule: i18n ──────────────────────────────────────────
 ${stripImportsAndExports(i18nCode)}
 
-// ─── Submodule: Catalog ───────────────────────────────────────
-${stripImportsAndExports(catalogCode)}
-
 // ─── Submodule: Backdrop Manager ──────────────────────────────
+${stripImportsAndExports(sceneLiveCode)}
+
 ${stripImportsAndExports(backdropCode)}
 
 // ─── Submodule: Glass Controller ──────────────────────────────
@@ -84,12 +87,18 @@ ${stripImportsAndExports(rangeCode)}
 // ─── Submodule: Storage ───────────────────────────────────────
 ${stripImportsAndExports(configCode)}
 
-${stripImportsAndExports(contrastCode)}
-
 ${stripImportsAndExports(storageCode)}
 
-// ─── Submodule: Skin Controller ───────────────────────────────
-${stripImportsAndExports(controllerCode)}
+// ─── Submodule: Appearance Controller ─────────────────────────
+${stripImportsAndExports(appearanceControllerCode)}
+
+${stripImportsAndExports(fontControllerCode)}
+
+${stripImportsAndExports(fxOverlayCode)}
+
+${stripImportsAndExports(parallaxCode)}
+
+${stripImportsAndExports(themeFollowCode)}
 
 // ─── Submodule: Root-Theme Watcher ────────────────────────────
 ${stripImportsAndExports(watcherCode)}
@@ -97,134 +106,135 @@ ${stripImportsAndExports(watcherCode)}
 // ─── Submodule: Wallpaper Engine Library ─────────────────────
 ${stripImportsAndExports(weLibraryCode)}
 
-// ─── Explicitly MIT-marked WebGL player from dsh-skins ──────
-${stripImportsAndExports(playerCode)}
-
-${stripImportsAndExports(shimCode)}
-
-// ─── Scene Player Bridge ─────────────────────────────────────
-${stripImportsAndExports(sceneCode)}
+${stripImportsAndExports(wallpaperApplyCode)}
 
 ${stripImportsAndExports(sceneBackendCode)}
 
-// ─── Sandboxed Web Wallpaper Bridge ──────────────────────────
-${stripImportsAndExports(webCode)}
-
-// ─── Submodule: Try-On Banner ─────────────────────────────────
-${stripImportsAndExports(tryOnBannerCode)}
-
-// ─── Submodule: Custom Theme Studio ───────────────────────────
-${stripImportsAndExports(studioCode)}
+// ─── Submodule: Wallpaper rotation ───────────────────────────
+${stripImportsAndExports(rotationCode)}
 
 // ─── Submodule: Wallpaper Engine Panel ───────────────────────
-${stripImportsAndExports(wePanelCode)}
+${moduleScope(wePanelCode, ['WallpaperEnginePanel'])}
 
-// ─── Submodule: Skin Center Page ──────────────────────────────
-${stripImportsAndExports(pageCode)}
+// ─── Submodule: Rotation group editor ────────────────────────
+${moduleScope(rotationEditorCode, ['RotationGroupEditor'])}
+
+// ─── Submodule: Font settings ────────────────────────────────
+${moduleScope(fontSettingsCode, ['FontSettingsPanel'])}
+
+// ─── Submodule: Appearance Settings Panel ─────────────────────
+${moduleScope(appearanceSettingsCode, ['AppearanceSettingsPanel'])}
+
+// ─── Submodule: Appearance settings entry ─────────────────────
+${moduleScope(appearanceEntryCode, ['mountAppearanceEntry'])}
 
 // ─── Plugin Registration Entry ────────────────────────────────
 const PLUGIN_ID = 'hermes-skins'
 
 export default {
   id: PLUGIN_ID,
-  name: 'Hermes Skin Center',
+  name: 'Hermes Wallpaper Engine',
   defaultEnabled: true,
 
   register(ctx) {
+    const rest = typeof ctx.rest === 'function'
+      ? (path, options) => ctx.rest(path, options)
+      : async () => ({ ok: false, error: 'plugin backend unavailable' })
     // 1. Register I18N
     ctx.i18n.register(I18N_DICTIONARY)
 
     // 2. Initialize engines & state
-    const store = createSkinStore(ctx)
-    const backdropManager = new BackdropManager({
-      prepareScene: dir => ctx.rest('/scene/prepare', { method: 'POST', body: { dir } })
-    })
+    const store = createAppearanceStore(ctx)
+    const openScene = payload => rest('/scene/open', { method: 'POST', body: payload })
+    const backdropManager = new BackdropManager({ openScene })
     const glassController = new GlassController()
     const rangeController = new RangeController()
     rangeController.start()
-    const controller = new SkinController(store, BUILTIN_SKINS, backdropManager, glassController)
+    const fontController = new FontController({ setAccentOverride })
+    const fxOverlay = new FxOverlay()
+    const parallax = new ParallaxController()
+    const themeFollow = new ThemeFollowController()
+    const controller = new AppearanceController(store, backdropManager, glassController,
+      [fontController, fxOverlay, parallax, themeFollow])
+    const rotation = new WallpaperRotation(store, openScene, controller, backdropManager)
 
-    // 3. Register themes to core THEMES_AREA
-    for (const skin of BUILTIN_SKINS) {
-      ctx.register({
-        id: \`theme-\${skin.id}\`,
-        area: THEMES_AREA,
-        data: toThemeContribution(skin)
+    const loadFonts = () => rest('/fonts')
+    const loadUploads = () => rest('/uploads')
+    const importUploads = paths => rest('/uploads/import', { method: 'POST', body: { paths } })
+    const importUrl = url => rest('/uploads/url', { method: 'POST', body: { url } })
+    const importBing = () => rest('/uploads/bing', { method: 'POST', body: { index: 0 } })
+    const loadDiagnostics = () => rest('/system/diagnostics')
+    const clearSceneCache = () => rest('/system/cache/clear', { method: 'POST', body: { scope: 'scene' } })
+    const loadNowPlaying = () => rest('/now-playing')
+    let nowPlayingBusy = false
+    const refreshNowPlaying = async () => {
+      const current = store.$config.get()
+      if (!['scene', 'web'].includes(current.wallpaperType)) {
+        backdropManager.setMediaSnapshot(null)
+        return
+      }
+      if (nowPlayingBusy) return
+      nowPlayingBusy = true
+      try {
+        backdropManager.setMediaSnapshot(await loadNowPlaying())
+      } catch {
+        backdropManager.setMediaSnapshot(null)
+      } finally {
+        nowPlayingBusy = false
+      }
+    }
+    const stopNowPlayingPoll = typeof ctx.setInterval === 'function'
+      ? ctx.setInterval(() => void refreshNowPlaying(), 5000)
+      : null
+    void refreshNowPlaying()
+    const panel = () => jsx(AppearanceSettingsPanel, {
+      store, controller, openScene, loadFonts, loadUploads, importUploads, importUrl,
+      importBing, loadDiagnostics, clearSceneCache, loadNowPlaying
+    })
+    const openPanel = () => {
+      try { host.navigate(pluginSettingsHref('hermes-skins:wallpaper')) }
+      catch { host.navigate('/settings?tab=plugins') }
+    }
+
+    // 3. The full page lives in Settings ▸ Plugins; the Appearance rail shows
+    //    a small door at the end of its General section. Both are removed with
+    //    the plugin. appearance.extra remains for hosts that render the
+    //    Appearance root view.
+    if (typeof ctx.registerSettingsPage === 'function') {
+      ctx.registerSettingsPage({
+        id: 'wallpaper',
+        title: '壁纸引擎',
+        icon: 'symbol-color',
+        order: 20,
+        render: panel
       })
     }
-    for (const skin of store.$config.get().customSkins) {
-      ctx.register({ id: \`theme-\${skin.id}\`, area: THEMES_AREA, data: toThemeContribution(skin) })
-    }
-
-    // 4. Register Full Page Route (/skins)
     ctx.register({
-      id: 'page',
-      area: ROUTES_AREA,
-      data: { path: '/skins' },
-      render: () => jsx(SkinCenterPage, { store, controller,
-        prepareScene: dir => ctx.rest('/scene/prepare', { method: 'POST', body: { dir } }) })
+      id: 'appearance-panel',
+      area: APPEARANCE_AREAS.extra,
+      render: panel
+    })
+    const disposeAppearanceEntry = mountAppearanceEntry({
+      getSummary: () => {
+        const config = store.$config.get()
+        return config.weSelection?.title ||
+          config.wallpaperSource.split(/[\\\\/]/).filter(Boolean).at(-1) ||
+          'Scene / Web / 视频 / 图片壁纸与液态玻璃。'
+      },
+      open: openPanel
     })
 
-    // 5. Register Sidebar Navigation Entry
-    ctx.register({
-      id: 'sidebar-nav',
-      area: SIDEBAR_NAV_AREA,
-      order: 85,
-      data: {
-        path: '/skins',
-        label: '皮肤中心',
-        codicon: 'symbol-color'
-      }
-    })
+    // 4. Runtime theme watcher keeps the veil/surface mode in sync with Hermes.
+    const disposeThemeWatcher = watchRootTheme(controller)
+    controller.sync()
 
-    // 6. Runtime theme watcher. The old status-bar chip carried this sync in a
-    //    React effect; the watcher runs independent of any page or status-bar
-    //    visibility, watches only the root theme attributes, and is disposed
-    //    with the plugin. The bottom bar keeps no skin entry at all — the skin
-    //    center page and the command palette remain the entries.
-    const disposeThemeWatcher = watchRootTheme(store, controller)
-
-    // 7. Register Command Palette actions
-    ctx.register({
-      id: 'cmd-open-skins',
-      area: PALETTE_AREA,
-      data: {
-        id: 'hermes-skins.open-gallery',
-        title: 'Skin Center: Open Gallery / 皮肤中心: 打开画廊',
-        keywords: ['skin', 'theme', 'wallpaper', 'gallery', '换肤', '皮肤', '壁纸'],
-        run: () => host.navigate('/skins')
-      }
-    })
-
-    ctx.register({
-      id: 'cmd-toggle-wallpaper',
-      area: PALETTE_AREA,
-      data: {
-        id: 'hermes-skins.toggle-wallpaper',
-        title: 'Skin Center: Toggle Wallpaper / 皮肤中心: 切换壁纸开关',
-        keywords: ['skin', 'wallpaper', 'toggle', '壁纸'],
-        run: () => {
-          const next = !store.$config.get().wallpaperEnabled
-          controller.changeConfig({ wallpaperEnabled: next })
-          host.notify({
-            kind: 'info',
-            message: next ? 'Custom wallpaper enabled' : 'Custom wallpaper disabled'
-          })
-        }
-      }
-    })
-
-    // Hermes owns the selected theme. A stored plugin selection never overrides it.
-    if (typeof document !== 'undefined') {
-      controller.sync(document.documentElement.dataset.hermesTheme || null,
-        document.documentElement.dataset.hermesMode || 'dark')
-    }
-
-    // 9. Teardown on plugin reload / dispose: backdrop DOM, runtime CSS, the
-    //    composer frost layer and the theme watcher all release together.
+    // 5. Teardown on plugin reload / dispose.
     if (typeof ctx.onDispose === 'function') {
       ctx.onDispose(() => {
         disposeThemeWatcher()
+        disposeAppearanceEntry()
+        if (typeof stopNowPlayingPoll === 'function') stopNowPlayingPoll()
+        rotation.destroy()
         rangeController.destroy()
         controller.destroy()
         store.destroy()

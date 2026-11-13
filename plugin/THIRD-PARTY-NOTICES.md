@@ -12,6 +12,27 @@ The three vendored source files derive from this revision with local modificatio
 
 Changes in distributed generated bundles: internal imports/exports are removed for the desktop single-file format; TypeScript is transpiled and bundled for the scene helper. The bundles include the vendor modifications above and additional Hermes bridge/lifecycle adapters.
 
+## dsh-wallpaper-engine
+
+Source: https://github.com/elysia395/dsh-wallpaper-engine
+Revision: fd3e01fd11cd5ad83f46940ab4d61d971cfbcf91
+Copyright (c) 2026 elysia395 — MIT.
+
+The WebWallGL renderer page, layer/pointer/pause lifecycle, rotation-group model,
+font-set/role model, FX and parallax algorithms, and the seven-tab settings
+information architecture were adapted for Hermes' host APIs and DOM. Mascots,
+avatars and pet-link are intentionally excluded. No upstream endorsement is
+implied.
+
+## WebWallGL 3.0.1
+
+Source: https://github.com/oneincase/webwallgl
+Copyright (c) 2026 oneincase <462534624@qq.com> — MIT.
+
+`webwallgl.global.min.js` is shipped unmodified as a self-contained classic
+script exposing `globalThis.WebWallGL`; it inlines its `mediabunny`
+dependency. Wallpaper Engine workshop assets are not redistributed.
+
 ## jpeg-js 0.4.4
 
 Copyright (c) 2014, Eugene Ware. All rights reserved.

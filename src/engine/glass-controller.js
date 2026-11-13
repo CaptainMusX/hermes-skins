@@ -53,7 +53,20 @@ export class GlassController {
     this.terminalBase = null
   }
 
-  update({ enabled, glassTransparency = 10, bubbleOpacity = 100, composerFrost = 10, surfaceFrost = 8 }) {
+  update({
+    enabled, glassTransparency = 10, bubbleOpacity = 100, composerFrost = 10,
+    surfaceFrost = 8, saturation = 150, border = 35, highlight = true,
+    accent = '#4f8cff', glassColor = null, glassDarkSeparate = false,
+    glassFidelity = 100, chatGlassFidelity = 100,
+    settingsWindowTransparency = 20, settingsWindowBlur = 16,
+    sidebarGlass = true, sidebarFollowGlobal = true, sidebarBlur = 16,
+    sidebarAlpha = 60, sidebarColor = '#ffffff', leftSidebarGlass = true,
+    leftSidebarCornerRadius = 'native', leftSidebarSquareTL = false,
+    leftSidebarSquareTR = false, leftSidebarSquareBR = false, leftSidebarSquareBL = false,
+    rightSidebarCornerRadius = 'native', rightSidebarSquareTL = false,
+    rightSidebarSquareTR = false, rightSidebarSquareBR = false, rightSidebarSquareBL = false,
+    titlebarGlass = true, isDark = true
+  }) {
     if (typeof document === 'undefined') return
     const root = document.documentElement
     if (!enabled) {
@@ -84,21 +97,56 @@ export class GlassController {
       const n = Number(value)
       return Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : fallback
     }
-    const keep = 100 - pct(glassTransparency, 10)
+    const fidelity = Math.min(1, Math.max(0, Number(glassFidelity) / 100))
+    const chatFidelity = Math.min(1, Math.max(0, Number(chatGlassFidelity) / 100))
+    const keep = (100 - pct(glassTransparency, 10)) * (0.4 + 0.6 * fidelity)
     // Floating text sits over other text, so it retains a readable veil while
     // still revealing the wallpaper. It follows the main lever above 70% fill.
     const floatingKeep = Math.max(keep, 70)
-    const overlayKeep = Math.max(keep, 74)
-    const bubbleKeep = pct(bubbleOpacity, 100)
+    const overlayKeep = Math.min(100, Math.max(25, 100 - pct(settingsWindowTransparency, 20)))
+    const bubbleKeep = pct(bubbleOpacity, 100) * (0.5 + 0.5 * chatFidelity)
     const composerBlur = Math.min(20, Math.max(0, pct(composerFrost, 10)))
     const surfaceBlur = Math.min(20, Math.max(0, pct(surfaceFrost, 8)))
+    const overlayBlur = Math.min(60, Math.max(0, pct(settingsWindowBlur, 16)))
 
     // Frosted glass samples the wallpaper behind a surface; blur(0) would still
     // promote a composited layer, so the frost vars stay `none` when off.
-    const frost = surfaceBlur > 0 ? `blur(${surfaceBlur}px)` : 'none'
-    const overlayFrost = frost
+    const saturate = Math.min(200, Math.max(100, Number.isFinite(Number(saturation)) ? Number(saturation) : 150))
+    const borderAlpha = Math.min(1, Math.max(0, (Number.isFinite(Number(border)) ? Number(border) : 35) / 100))
+    const highlightAlpha = highlight ? 0.16 : 0
+    const frost = surfaceBlur > 0 ? `saturate(${saturate}%) blur(${surfaceBlur}px)` : 'none'
+    const overlayFrost = overlayBlur > 0 ? `saturate(${saturate}%) blur(${overlayBlur}px)` : 'none'
     const overlayScrimFrost = 'none'
-    const composerFrostCss = composerBlur > 0 ? `blur(${composerBlur}px)` : 'none'
+    const composerFrostCss = composerBlur > 0 ? `saturate(${saturate}%) blur(${composerBlur}px)` : 'none'
+    const chosenGlassColor = glassColor && typeof glassColor === 'object'
+      ? (isDark && glassDarkSeparate ? glassColor.dark : glassColor.light)
+      : null
+    const customTint = /^#[0-9a-f]{6}$/i.test(chosenGlassColor || '') &&
+      String(chosenGlassColor).toLowerCase() !== '#ffffff'
+      ? `color-mix(in srgb, ${chosenGlassColor} ${keep}%, transparent)`
+      : null
+    const chromeTint = customTint || `color-mix(in srgb, var(--ui-bg-chrome) ${keep}%, transparent)`
+    const sidebarKeep = sidebarFollowGlobal ? keep : 100 - pct(sidebarAlpha, 60)
+    const sidebarTint = !sidebarGlass || !leftSidebarGlass
+      ? 'var(--ui-bg-sidebar)'
+      : sidebarFollowGlobal
+        ? chromeTint
+        : `color-mix(in srgb, ${sidebarColor} ${sidebarKeep}%, transparent)`
+    const sidebarFrost = sidebarFollowGlobal
+      ? frost
+      : sidebarBlur > 0 ? `saturate(${saturate}%) blur(${Math.min(60, sidebarBlur)}px)` : 'none'
+    const titlebarTint = titlebarGlass ? chromeTint : 'var(--ui-bg-chrome)'
+    const titlebarFrost = titlebarGlass ? frost : 'none'
+    const cornerOf = (mode, square) => square ? '0px'
+      : mode === 'native' ? 'var(--radius-lg, 12px)' : `${mode}px`
+    const nativeCorners = leftSidebarCornerRadius === 'native' &&
+      !leftSidebarSquareTL && !leftSidebarSquareTR &&
+      !leftSidebarSquareBR && !leftSidebarSquareBL
+    const sidebarRadius = nativeCorners ? 'revert'
+      : `${cornerOf(leftSidebarCornerRadius, leftSidebarSquareTL)}
+        ${cornerOf(leftSidebarCornerRadius, leftSidebarSquareTR)}
+        ${cornerOf(leftSidebarCornerRadius, leftSidebarSquareBR)}
+        ${cornerOf(leftSidebarCornerRadius, leftSidebarSquareBL)}`
 
     // Terminal: xterm resolves --ui-terminal-surface-background to a concrete
     // color for its WebGL canvas, and the persistent host paints the same var
@@ -114,7 +162,7 @@ export class GlassController {
     // keeps the value tracking the official light/dark mode on every sync.
     const terminalAlpha = root.dataset?.hermesTerminalAlpha === 'true'
     const themeKey = `${root.dataset?.hermesTheme}:${root.dataset?.hermesMode}:${root.className}:${root.style?.cssText || ''}`
-    const materialKey = `${keep}:${bubbleKeep}:${composerBlur}:${surfaceBlur}:${terminalAlpha}:${themeKey}`
+    const materialKey = `${keep}:${overlayKeep}:${bubbleKeep}:${composerBlur}:${surfaceBlur}:${overlayBlur}:${saturate}:${borderAlpha}:${highlightAlpha}:${terminalAlpha}:${accent}:${chosenGlassColor}:${fidelity}:${chatFidelity}:${sidebarGlass}:${sidebarFollowGlobal}:${sidebarBlur}:${sidebarAlpha}:${sidebarColor}:${leftSidebarGlass}:${leftSidebarCornerRadius}:${leftSidebarSquareTL}:${leftSidebarSquareTR}:${leftSidebarSquareBR}:${leftSidebarSquareBL}:${rightSidebarCornerRadius}:${rightSidebarSquareTL}:${rightSidebarSquareTR}:${rightSidebarSquareBR}:${rightSidebarSquareBL}:${titlebarGlass}:${themeKey}`
     if (this.lastMaterialKey === materialKey && this.styleEl.isConnected) return
     let terminalSurface = 'var(--ui-bg-chrome)'
     if (terminalAlpha && document.body) {
@@ -141,10 +189,23 @@ export class GlassController {
         '--hermes-skins-floating-tint': `color-mix(in srgb, var(--ui-bg-chrome) ${floatingKeep}%, transparent)`,
         '--hermes-skins-overlay-tint': `color-mix(in srgb, var(--ui-bg-chrome) ${overlayKeep}%, transparent)`,
         '--hermes-skins-overlay-sidebar-tint': `color-mix(in srgb, var(--ui-bg-sidebar) ${Math.max(25, overlayKeep - 40)}%, transparent)`,
+        '--hermes-skins-chrome-tint': chromeTint,
+        '--hermes-skins-sidebar-tint': sidebarTint,
+        '--hermes-skins-editor-tint': chromeTint,
         '--hermes-skins-frost': frost,
+        '--hermes-skins-sidebar-frost': sidebarFrost,
+        '--hermes-skins-titlebar-tint': titlebarTint,
+        '--hermes-skins-titlebar-frost': titlebarFrost,
         '--hermes-skins-overlay-frost': overlayFrost,
         '--hermes-skins-overlay-scrim-frost': overlayScrimFrost,
         '--hermes-skins-composer-frost': composerFrostCss,
+        '--hermes-skins-glass-border': String(borderAlpha),
+        '--hermes-skins-glass-highlight': String(highlightAlpha),
+        '--hermes-skins-accent': accent,
+        '--we-accent': accent,
+        '--hermes-skins-fidelity': String(fidelity),
+        '--hermes-skins-chat-fidelity': String(chatFidelity),
+        '--hermes-skins-sidebar-radius': sidebarRadius,
         '--user-bubble-keep': `${bubbleKeep}%`,
         '--ui-terminal-surface-background': terminalSurface
       }
@@ -159,16 +220,26 @@ export class GlassController {
     const css = `
       :root[data-hermes-skins-active="true"] {
         --hermes-skins-keep: ${keep}%;
-        --hermes-skins-chrome-tint: color-mix(in srgb, var(--ui-bg-chrome) var(--hermes-skins-keep), transparent);
-        --hermes-skins-sidebar-tint: var(--hermes-skins-chrome-tint);
-        --hermes-skins-editor-tint: var(--hermes-skins-chrome-tint);
+        --hermes-skins-chrome-tint: ${chromeTint};
+        --hermes-skins-sidebar-tint: ${sidebarTint};
+        --hermes-skins-editor-tint: ${chromeTint};
         --hermes-skins-floating-tint: color-mix(in srgb, var(--ui-bg-chrome) ${floatingKeep}%, transparent);
         --hermes-skins-overlay-tint: color-mix(in srgb, var(--ui-bg-chrome) ${overlayKeep}%, transparent);
         --hermes-skins-overlay-sidebar-tint: color-mix(in srgb, var(--ui-bg-sidebar) ${Math.max(25, overlayKeep - 40)}%, transparent);
         --hermes-skins-frost: ${frost};
+        --hermes-skins-sidebar-frost: ${sidebarFrost};
+        --hermes-skins-titlebar-tint: ${titlebarTint};
+        --hermes-skins-titlebar-frost: ${titlebarFrost};
         --hermes-skins-overlay-frost: ${overlayFrost};
         --hermes-skins-overlay-scrim-frost: ${overlayScrimFrost};
         --hermes-skins-composer-frost: ${composerFrostCss};
+        --hermes-skins-glass-border: ${borderAlpha};
+        --hermes-skins-glass-highlight: ${highlightAlpha};
+        --hermes-skins-accent: ${accent};
+        --we-accent: ${accent};
+        --hermes-skins-fidelity: ${fidelity};
+        --hermes-skins-chat-fidelity: ${chatFidelity};
+        --hermes-skins-sidebar-radius: ${sidebarRadius};
         /* Bubble fill share. !important is required to outrank the host's own
            bubble-transparency lever, which publishes the same custom property
            as an inline style on <html>; while a wallpaper is showing this
@@ -270,15 +341,18 @@ export class GlassController {
          light/dark only changes the theme seed underneath. */
       :root[data-hermes-skins-active="true"] [data-slot="sidebar"] {
         background-color: var(--hermes-skins-sidebar-tint) !important;
-        backdrop-filter: var(--hermes-skins-frost);
-        -webkit-backdrop-filter: var(--hermes-skins-frost);
+        backdrop-filter: var(--hermes-skins-sidebar-frost);
+        -webkit-backdrop-filter: var(--hermes-skins-sidebar-frost);
+        border-radius: var(--hermes-skins-sidebar-radius, revert);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, var(--hermes-skins-glass-highlight)),
+          inset 0 0 0 1px rgba(255, 255, 255, var(--hermes-skins-glass-border));
       }
       /* Frameless-window title bar: the popout shell declares --titlebar-height
          and its aria-hidden first child paints the opaque chrome strip. */
       :root[data-hermes-skins-active="true"] [data-contrib-shell][style*="--titlebar-height"] > div[aria-hidden="true"] {
-        background-color: var(--hermes-skins-chrome-tint) !important;
-        backdrop-filter: var(--hermes-skins-frost);
-        -webkit-backdrop-filter: var(--hermes-skins-frost);
+        background-color: var(--hermes-skins-titlebar-tint) !important;
+        backdrop-filter: var(--hermes-skins-titlebar-frost);
+        -webkit-backdrop-filter: var(--hermes-skins-titlebar-frost);
       }
       /* Token-painted structural surfaces (status bar, pane headers) restated
          for builds that paint them without the utility class; the frost is the
@@ -293,6 +367,7 @@ export class GlassController {
         background-color: var(--hermes-skins-chrome-tint) !important;
         backdrop-filter: var(--hermes-skins-frost);
         -webkit-backdrop-filter: var(--hermes-skins-frost);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, var(--hermes-skins-glass-highlight));
       }
       /* Pane tab strip: the pane header behind it is the single structural
          fill. The strip's own utility fill — and the inactive-tab fill it
@@ -306,7 +381,7 @@ export class GlassController {
         -webkit-backdrop-filter: none;
       }
       /* Plugin SDK cards use bg-card/bg-background, not Hermes' surface
-         tokens. These are the large white plates visible in Skin Center.
+         tokens. These are the large white plates visible in the plugin settings.
          Scope the fix to our marked cards so other apps' readability is not
          changed; nested wallpaper thumbnails do not stack another veil. */
       :root[data-hermes-skins-active="true"] [data-hermes-skins-surface] {
@@ -378,7 +453,9 @@ export class GlassController {
         background-color: var(--hermes-skins-overlay-tint) !important;
         backdrop-filter: var(--hermes-skins-overlay-frost) !important;
         -webkit-backdrop-filter: var(--hermes-skins-overlay-frost) !important;
-        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.2), 0 0 0 1px color-mix(in srgb, var(--dt-border) 40%, transparent) !important;
+        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.2),
+          0 0 0 1px color-mix(in srgb, var(--dt-border) 40%, transparent),
+          inset 0 1px 0 rgba(255, 255, 255, var(--hermes-skins-glass-highlight)) !important;
       }
       /* Left sidebar in overlay cards: single layer translucency to avoid double-darkening */
       :root[data-hermes-skins-active="true"] [data-glass-raised] aside,

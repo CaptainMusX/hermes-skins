@@ -90,12 +90,12 @@ test('scene player renders the xray cursor reveal', () => {
   assert.match(player, /u_pointerScale/)
 })
 
-test('backdrop mirrors the pointer into live wallpapers', () => {
+test('backdrop mirrors the pointer into the WebWallGL renderer', () => {
   const backdrop = fs.readFileSync(new URL('../src/engine/backdrop-manager.js', import.meta.url), 'utf8')
   assert.match(backdrop, /forwardCursor/)
-  assert.match(backdrop, /dsh-set-cursor/)
-  assert.match(backdrop, /hermes-we-cursor/)
-  assert.match(backdrop, /this\.webIframe = frame/)
+  assert.match(backdrop, /type: 'pointer'/)
+  assert.match(backdrop, /hermes-skins-host/)
+  assert.match(backdrop, /this\.sceneIframe = frame/)
 })
 
 test('cancelling an obsolete scene stops reading resources and releases allocated Blob URLs', async () => {

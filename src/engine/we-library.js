@@ -56,6 +56,129 @@ async function mapLimit(items, limit, fn) {
   return results
 }
 
+const SLIDE_SWITCH_MS = { 1: 60_000, 2: 300_000, 3: 600_000, 4: 1_800_000, 5: 3_600_000 }
+const PROP_TYPES = new Set([
+  'color', 'bool', 'slider', 'combo', 'text', 'textinput', 'file', 'directory', 'group', 'other'
+])
+const PROP_LANGS = ['zh-chs', 'zh-cht', 'en-us']
+
+const stripHtml = value => typeof value !== 'string' ? '' : value
+  .replace(/<br\s*\/?>/gi, '\n')
+  .replace(/<[^>]*>/g, '')
+  .replace(/&nbsp;/gi, ' ')
+  .replace(/&amp;/gi, '&')
+  .replace(/&lt;/gi, '<')
+  .replace(/&gt;/gi, '>')
+  .replace(/&quot;/gi, '"')
+  .replace(/&#0?39;|&apos;/gi, "'")
+  .trim()
+
+function propertyText(project, key, fallback) {
+  const table = project?.general?.localization
+  if (table && typeof table === 'object') {
+    for (const language of PROP_LANGS) {
+      const entry = Object.entries(table).find(([name]) => name.toLowerCase() === language)?.[1]
+      if (entry && typeof entry === 'object' && typeof entry[key] === 'string') {
+        const localized = stripHtml(entry[key])
+        if (localized) return localized
+      }
+    }
+  }
+  return stripHtml(key) || fallback
+}
+
+function propertyDefault(type, definition) {
+  if (!definition || !('value' in definition)) return null
+  const value = definition.value
+  if (value === undefined || value === null) return null
+  if (type === 'bool') return typeof value === 'boolean' ? value : null
+  if (type === 'slider') return Number.isFinite(Number(value)) ? Number(value) : null
+  if (type === 'combo') return value
+  if (type === 'color') return typeof value === 'string' ? value : null
+  return typeof value === 'string' ? value : JSON.stringify(value)
+}
+
+export function parseProjectProperties(project) {
+  const source = project?.general?.properties
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return []
+  return Object.entries(source)
+    .filter(([, definition]) => definition && typeof definition === 'object' &&
+      typeof definition.type === 'string')
+    .sort((left, right) => {
+      const order = Number(left[1].order || 0) - Number(right[1].order || 0)
+      return order || (left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0)
+    })
+    .slice(0, 100)
+    .map(([name, definition]) => {
+      const rawType = String(definition.type || 'other').toLowerCase()
+      const type = PROP_TYPES.has(rawType) ? rawType : 'other'
+      const entry = {
+        name: name.slice(0, 120),
+        type,
+        text: propertyText(project, typeof definition.text === 'string' ? definition.text : name, name).slice(0, 240),
+        order: Number.isFinite(Number(definition.order)) ? Number(definition.order) : 0,
+        value: propertyDefault(type, definition),
+        hidden: definition.editable === false
+      }
+      if (Array.isArray(definition.options)) {
+        entry.options = definition.options
+          .filter(option => option && typeof option === 'object' && 'value' in option)
+          .slice(0, 200)
+          .map(option => ({
+            label: propertyText(project, typeof option.label === 'string' ? option.label : '',
+              String(option.value)).slice(0, 160),
+            value: option.value
+          }))
+      }
+      for (const key of ['min', 'max', 'step', 'precision']) {
+        if (Number.isFinite(Number(definition[key]))) entry[key] = Number(definition[key])
+      }
+      if (typeof definition.fileType === 'string') entry.fileType = definition.fileType.slice(0, 20)
+      return entry
+    })
+}
+
+async function listPictures(bridge, dir, depth = 0) {
+  if (depth > 3) return []
+  const entries = await entriesAt(bridge, dir)
+  if (!entries) return []
+  const images = []
+  const directories = []
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue
+    const path = entry.path || joinLocalPath(dir, entry.name)
+    if (entry.isDirectory) directories.push(path)
+    else if (IMAGE_EXTENSIONS.test(entry.name)) images.push(path)
+    if (images.length >= 200) break
+  }
+  for (const child of directories) {
+    if (images.length >= 200) break
+    images.push(...await listPictures(bridge, child, depth + 1))
+  }
+  return images
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+    .slice(0, 200)
+}
+
+async function readPictureSlides(bridge, dir, project) {
+  const preset = project?.preset && typeof project.preset === 'object' ? project.preset : null
+  if (!preset) return null
+  const mode = Number(preset.wallpapermode)
+  const custom = typeof preset.customdirectory === 'string' ? preset.customdirectory.trim() : ''
+  const single = typeof preset.image === 'string' ? preset.image.trim() : ''
+  let slides = []
+  if (custom && (mode === 1 || mode === 2)) {
+    const base = safeProjectPath(dir, custom)
+    if (base) slides = await listPictures(bridge, base)
+  } else if (single && IMAGE_EXTENSIONS.test(single)) {
+    const path = safeProjectPath(dir, single)
+    if (path && await existsAt(bridge, path)) slides = [path]
+  }
+  if (!slides.length) return null
+  const interval = Number(preset.imageswitchtimes)
+  return { slides, slideIntervalMs: SLIDE_SWITCH_MS[interval] || null }
+}
+
 export async function readWallpaperProject(bridge, dir, source = 'manual', knownEntries = null) {
   const entries = knownEntries || await entriesAt(bridge, dir)
   if (!entries?.some(entry => entry.name.toLowerCase() === 'project.json')) return null
@@ -83,22 +206,28 @@ export async function readWallpaperProject(bridge, dir, source = 'manual', known
   const canPlayVideo = kind === 'video' && mainExists && VIDEO_EXTENSIONS.test(mainPath)
   const canShowImage = kind === 'image' && mainExists && IMAGE_EXTENSIONS.test(mainPath)
   const canShowWeb = kind === 'web' && mainExists && /\.html?$/i.test(mainPath)
+  const picture = !canPlayVideo && !canShowWeb ? await readPictureSlides(bridge, dir, project) : null
   const mediaType = canPlayVideo ? 'video' : canShowWeb ? 'web' : 'image'
-  const mediaPath = canPlayVideo || canShowImage || canShowWeb ? mainPath : (previewExists ? previewPath : null)
+  const mediaPath = canPlayVideo || canShowImage || canShowWeb
+    ? mainPath : (picture?.slides?.[0] || (previewExists ? previewPath : null))
   if (!mediaPath) return null
   const title = typeof project.title === 'string' && project.title.trim()
     ? project.title.trim().slice(0, 120) : dir.split(/[\\/]/).at(-1)
   return {
     id: dir.toLowerCase(),
     title,
-    kind,
+    kind: picture ? 'image' : kind,
     source,
+    contentrating: typeof project.contentrating === 'string' ? project.contentrating : null,
     dir,
     mediaPath,
     mediaType,
+    slides: picture?.slides || (canShowImage ? [mainPath] : []),
+    slideIntervalMs: picture?.slideIntervalMs || null,
     previewPath: previewExists ? previewPath : mediaPath,
-    staticFallback: !canPlayVideo && !canShowImage && !canShowWeb,
-    workshopId: typeof project.workshopid === 'string' ? project.workshopid : null
+    staticFallback: !canPlayVideo && !canShowImage && !canShowWeb && !picture,
+    workshopId: typeof project.workshopid === 'string' ? project.workshopid : null,
+    properties: parseProjectProperties(project)
   }
 }
 

@@ -12,6 +12,7 @@ export async function enableSceneBackend(bridge) {
   try {
     const health = await bridge.api({ path: '/api/plugins/hermes-skins/scene/health' })
     if (!health?.ok) throw new Error('Scene helper or Node.js runtime unavailable')
+    if (health.webwallgl === false) throw new Error('WebWallGL renderer files are missing from the backend package')
     return { ready: true, restartRequired: false }
   } catch (error) {
     if (!isSceneBackendMissing(error)) throw error

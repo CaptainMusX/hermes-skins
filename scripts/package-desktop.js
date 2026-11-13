@@ -13,9 +13,10 @@ const folder = `hermes-skins-v${metadata.version}`
 const output = path.join(root, 'dist', `${folder}-windows.zip`)
 const files = new Map()
 const whitelist = [
-  'plugin.js', 'LICENSE', 'patches/hermes-desktop-terminal-alpha.patch',
+  'plugin.js', 'README.md', 'README.zh.md', 'LICENSE', 'patches/hermes-desktop-terminal-alpha.patch',
   'scripts/install-local.js', 'scripts/install-windows.cmd', 'scripts/license-files.js',
-  'backend/manifest.json', 'backend/plugin_api.py', 'backend/scene-helper.mjs', 'backend/plugin.yaml', 'backend/__init__.py',
+  'backend/manifest.json', 'backend/plugin_api.py', 'backend/scene-helper.mjs', 'backend/scene_media.py',
+  'backend/plugin.yaml', 'backend/__init__.py',
   'third_party/dsh-skins/LICENSE', 'third_party/dsh-skins/NOTICE.md', 'third_party/jpeg-js/LICENSE'
 ]
 function include(source, target = source) {
@@ -25,9 +26,15 @@ function include(source, target = source) {
   files.set(target, fs.readFileSync(full))
 }
 for (const source of whitelist) include(source)
+for (const source of fs.readdirSync(path.join(root, 'backend', 'webwallgl'), { recursive: true })) {
+  const relative = path.join('backend', 'webwallgl', String(source)).replace(/\\/g, '/')
+  if (fs.statSync(path.join(root, relative)).isFile()) include(relative)
+}
 for (const [source] of LICENSE_FILES) include(source)
 include('docs/INSTALL.zh.md', 'INSTALL.zh.md')
 include('docs/INSTALL.md', 'INSTALL.md')
+include('docs/DSHWE-PARITY.zh.md', 'docs/DSHWE-PARITY.zh.md')
+include('docs/WEBWALLGL-2.0.zh.md', 'docs/WEBWALLGL-2.0.zh.md')
 if (files.get('plugin.js').length > 512 * 1024) throw new Error('Desktop plugin exceeds the host size limit')
 files.set('install.cmd', Buffer.from('@echo off\r\ncall "%~dp0scripts\\install-windows.cmd" %*\r\n'))
 files.set('package.json', Buffer.from(JSON.stringify({

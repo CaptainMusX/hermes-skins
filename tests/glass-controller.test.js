@@ -129,7 +129,10 @@ test('endpoint levers stay honest in the generated stylesheet', () => {
   const f = fixture({ terminalAlpha: true })
   try {
     const glass = new GlassController()
-    glass.update({ enabled: true, glassTransparency: 100, surfaceFrost: 0, composerFrost: 0, bubbleOpacity: 0 })
+    glass.update({
+      enabled: true, glassTransparency: 100, surfaceFrost: 0, settingsWindowBlur: 0,
+      composerFrost: 0, bubbleOpacity: 0
+    })
     const css = glass.styleEl.textContent
     assert.ok(css.includes('--hermes-skins-keep: 0%'))
     assert.ok(css.includes('--hermes-skins-frost: none'))

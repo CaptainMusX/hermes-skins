@@ -18,18 +18,20 @@ const files = [
   ['third_party/jpeg-js/LICENSE', 'dashboard/LICENSE.jpeg-js'],
   ['backend/manifest.json', 'dashboard/manifest.json'],
   ['backend/plugin_api.py', 'dashboard/plugin_api.py'],
-  ['backend/scene-helper.mjs', 'dashboard/scene-helper.mjs']
+  ['backend/scene-helper.mjs', 'dashboard/scene-helper.mjs'],
+  ['backend/scene_media.py', 'dashboard/scene_media.py']
 ]
 for (const [source, relative] of files) {
   const file = path.join(target, relative)
   fs.mkdirSync(path.dirname(file), { recursive: true })
   fs.copyFileSync(path.join(root, source), file)
 }
+fs.cpSync(path.join(root, 'backend', 'webwallgl'), path.join(target, 'dashboard', 'webwallgl'), { recursive: true })
 fs.writeFileSync(path.join(target, 'plugin.yaml'), [
   'name: hermes-skins', `version: "${metadata.version}"`,
-  'description: Hermes Skin Center - themes, translucent desktop surfaces and Wallpaper Engine backgrounds.',
+  'description: Hermes Wallpaper Engine - Scene/Web/video wallpapers and liquid-glass desktop surfaces.',
   'author: CaptainMusX', 'license: See LICENSING.md', 'kind: standalone',
-  'tags: [desktop, themes, wallpaper]', ''
+  'tags: [desktop, wallpaper, glass]', ''
 ].join('\n'))
 fs.writeFileSync(path.join(target, '__init__.py'), '"""Desktop and dashboard surfaces are loaded by Hermes from this package."""\n\ndef register(ctx):\n    """No agent tools or hooks are registered by this appearance plugin."""\n    pass\n')
 fs.writeFileSync(path.join(target, '.gitattributes'), '* text eol=lf\n')

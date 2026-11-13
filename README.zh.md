@@ -1,77 +1,71 @@
-# Hermes 皮肤中心
+# Hermes 壁纸引擎
 
-## 1.3.7 场景壁纸切换恢复
+Hermes Desktop 的 Wallpaper Engine 插件。把本机 Scene、Web、视频和图片壁纸放到界面背后，并提供液态玻璃、字体集、点击/拖尾、3D 视差和轮播列表。
 
-切换到新场景需要启用后端，已播放的视频/缓存场景并不能证明解包接口可用。接口返回 404 时，壁纸页提供“启用场景后端”，通过 Hermes 插件管理器恢复并检查实际健康接口；需要重启加载接口时会明确提示，保留当前壁纸。安装器不再在官方启用失败时直接写白名单。详见 [修复记录](docs/WALLPAPER-SWITCH-1.3.7.zh.md)。
+入口位于 **设置 → 外观 → 常规** 页面底部。插件不增加侧边栏入口、皮肤画廊、主题工坊或主题注册。宠物、吉祥物和会话头像按需求排除；参考的 DSH 壁纸插件中其余面向用户的功能均提供 Hermes 对应实现。
 
-## 1.3.6 卡顿优化
+## 功能
 
-参数拖动合并到下一次绘制，延后合并保存；磨砂参数只更新已解析的材质属性，避免反复重写整份 CSS 和强制读取主题颜色。滑块发现忽略聊天文本流并合并嵌套节点。兼容的 Hermes 文件源宿主直接读取场景缓存和缩略图，省去 Base64/IPC/Blob 复制；受限宿主保留桥接回退。视频纹理复用分配，按解码帧通知更新，着色器按需编译。已有设置与 30 FPS 上限保持。详见 [分析和验证记录](docs/PERFORMANCE-1.3.6.zh.md)。
+- **壁纸库**：Steam 库发现、Wallpaper Engine Scene/Web/视频/图片项目、本地图片/视频导入、URL 导入、Bing 每日一图、搜索、类型/内容分级/方向筛选、隐藏/恢复与卡片布局。
+- **壁纸属性**：读取 Scene/Web 作者声明的 `general.properties`，按壁纸保存覆盖值并实时推给 WebWallGL。
+- **Scene / Web**：WebWallGL 3.0.1 实时渲染、指针转发、沙箱 Web 项目、带签名 token 的本地环回媒体源与 HTTP Range。
+- **视频 / 图片**：本地视频直接播放、音量/倍速、Picture 项目交叉淡化，并支持统一的图内轮播间隔覆盖。
+- **切换过场**：硬切、交叉淡化、推移、擦除、光圈、缩放、条带，可选方向与速度。
+- **轮播列表**：命名列表、逐列表选择壁纸、独立间隔、顺序/随机、按间隔或视频播完推进、逐列表总开关。
+- **液态玻璃**：透光度、气泡填充、输入框/结构面磨砂、饱和度、边缘强度、顶部高光、明暗玻璃色、玻璃保真度、标题栏与侧栏控制。
+- **字体与配色**：命名字体集与导入导出、系统字体扫描、全局字族、角色级字号/字重/字族、组件级字体、文字颜色角色、全局 UI 配色和独立光标色。
+- **主题随壁纸**：从当前预览取样主色并更新 Hermes 强调色。
+- **点击 / 拖尾**：波纹、火花、两者同时、彗尾、星尘、彩虹/自定义颜色、混合模式和不透明度。
+- **3D 视差**：背景及可选的会话、输入框、侧栏、用户气泡和运行期发现的插件前端组。
+- **播放与省电**：15/30/60fps 场景上限、自动画质、渲染分辨率、视频纹理缩放、重启恢复等待、隐藏/失焦/电池暂停。
+- **系统页**：场景媒体健康、字体缓存数量、上传/场景缓存占用、最近日志、场景缓存清理、整套预设导入导出、关于与许可页。
+- **Now Playing**：Windows GSMTC 尽力集成，把当前媒体元数据送入 WebWallGL 媒体源。
 
-Hermes Desktop 插件：六款内置主题、自定义配色工坊，以及 Wallpaper Engine 本地库浏览与壁纸选用。此仓库公开，普通 Git 安装无需仓库访问令牌。
+## 使用
 
-许可范围见 [LICENSING.md](LICENSING.md)，第三方版权与修改说明见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。本项目独立开发，第三方源码保留其原有许可，不代表相关作者或软件的官方背书。个人媒体不随插件分发。
+1. 打开 **设置 → 外观 → 常规**。
+2. 在页面底部点击 **打开壁纸引擎**。
+3. 在 **壁纸库** 选择壁纸，或导入本地文件、URL、Bing 图片。
+4. 打开启用开关。Scene/Web 壁纸需要插件后端；首次安装后重启 Hermes 网关。
 
-## 1.3.5 性能修复
-
-移除插件内的光标水面波纹模拟，保留蝴蝶壁纸的 X-ray 光标隐藏和恢复。场景播放器使用单一帧调度，最多 30 FPS；无反射时不再重复绘制背景，视频纹理按帧复用。隐藏、切换壁纸、禁用和上下文丢失会取消渲染并释放资源；反复失败时退回静帧。设置遮罩不再叠加全屏模糊，磨砂跟随现有参数。详见 [修复与验证记录](docs/PERFORMANCE-1.3.5.zh.md)。
-
-## 主要行为
-
-- 主题通过 Hermes 官方主题接口注册；Hermes 自身仍决定当前主题和明暗模式。
-- “试穿”只调用临时预览；“退出试穿”恢复原主题；“应用”才保存。恢复按钮会返回应用插件皮肤前的 Hermes 主题。
-- 从 Wallpaper Engine 选用或手动设置的壁纸可搭配任意 Hermes 主题。“界面透光度” `panelGlass`（0–100%）统一驱动面板、顶栏、侧栏与底栏底色，“界面毛玻璃强度” `surfaceFrost` 调节背景磨砂；每个面板仅由最外层内容容器绘制一次，内部会话、侧栏与文件视图不叠加第二层。终端真正透视需要应用 `patches/hermes-desktop-terminal-alpha.patch` 并重新构建 Hermes 宿主。
-- 上下文用量浮窗、菜单、选择器、对话框与工具提示使用同一透光材质；浮层保留至少 70% 底色保证文字可读，随界面透光度调整，并使用同一背景模糊参数（0px 时关闭）。遮挡内容的必要实色层与图表分类色保留。
-- 插件启用期间，Hermes 全局滑动条以主题强调色显示已选范围，以中性色显示剩余范围；关闭壁纸后仍生效，支持键盘焦点、禁用状态与 RTL 方向。
-- 插件重载或禁用时，会移除自身壁纸、样式和未提交的预览。
-- 全新安装保留 Hermes 当前主题，自动优化滑动条，不自动开启壁纸；升级时已有数值原样保留，所有百分比参数均开放完整 0-100 区间。
-
-## 安装（推荐）
-
-一句命令安装前端与壁纸后端：
+## 安装
 
 ```sh
 hermes plugins install CaptainMusX/hermes-skins/plugin --enable
 ```
 
-或在 **技能与工具 → 插件 → Git 安装** 中输入 `CaptainMusX/hermes-skins/plugin`，安装并启用桌面组件与后端。包已预构建，无需 npm、手工复制或自定义安装脚本；首次安装后重新打开 Hermes，并重启网关加载场景接口。更新使用 `hermes plugins update hermes-skins`。
+也可使用 **技能与工具 → 插件 → Git 安装** 输入 `CaptainMusX/hermes-skins/plugin`。安装后重新打开 Hermes，并在需要时重启网关以挂载场景媒体接口。
 
-详见 [安装与迁移指南](docs/INSTALL.zh.md)。当前尚未上架“发现”列表，直接通过“Git 安装”使用；目录审核对内嵌壁纸播放器还有额外规则。
-
-## 开发与离线安装
+## 开发
 
 ```sh
+npm install
 npm run build
 npm test
 npm run install:desktop
+npm run package:desktop
 ```
 
-安装脚本会备份原有 `plugin.js`，然后原子替换，并部署场景后端，同时通过 `hermes plugins enable hermes-skins` 把插件注册进官方插件管理器；官方启用不可用或失败时会明确报错，不直接改写白名单。Hermes 打开时通常会自动重载；也可在命令面板运行 **Reload desktop plugins**。后端在 Hermes 启动时被禁用的情况下，重新启用后仍需重启一次 Hermes 后端以挂载场景接口。壁纸页提供“启用场景后端”用于恢复。
+`npm run install:desktop` 会备份旧桌面前端，部署后端与 WebWallGL 资源，并通过 Hermes 插件管理器启用插件。
 
-通过侧边栏“皮肤中心”或命令面板进入；底栏不再保留皮肤入口。
+## 架构
 
-## 分发到其他设备
+- `scripts/build.js` 构建单个桌面前端 ESM；内部模块辅助符号使用独立 IIFE 作用域，避免顶层命名冲突。
+- `src/engine/backdrop-manager.js` 管理双壁纸层、过场几何、画面滤镜、指针、功耗暂停和首帧看门狗。
+- `src/engine/{glass,font,fx-overlay,parallax,theme-follow}-controller.js` 分别管理玻璃、字体、画布特效、指针视差和主题取色，并在停用时完整清理。
+- `src/engine/rotation-controller.js` 在用户轮播组内推进，并在需要时监听视频播放结束。
+- `backend/scene_media.py` 在随机本地环回端口运行签名媒体源，支持 Range。
+- `backend/webwallgl/` 保存 WebWallGL 渲染页与引擎资源。
+- `backend/plugin_api.py` 提供场景解包/健康、系统字体、文件/URL/Bing 导入、诊断/缓存清理和 Now Playing 接口。
 
-当前本地媒体功能面向 Windows，实机验证宿主为 Hermes Desktop 0.21.5+3337。推荐目标设备直接执行上面的原生插件安装命令；场景解包使用宿主自带或 PATH 中的 Node。运行 `npm run package:desktop` 仍可生成需要 Node.js 22+ 安装的离线 ZIP，以及 SHA-256 校验文件。
+## 与 DSHWE 的对齐范围
 
-目标设备解压后双击 `install.cmd`；不需要安装构建依赖或重新编译。仓库也保留了构建产物，从 GitHub 下载源码 ZIP 后可直接运行 `node scripts/install-local.js`。自定义数据目录通过 `HERMES_HOME` 指定；`--frontend-only` 可仅安装前端，`--no-enable` 可留待手动启用后端。
+壁纸与渲染模型参考 [dsh-wallpaper-engine](https://github.com/elysia395/dsh-wallpaper-engine) 1.4.2（`fd3e01f`）。Hermes 已覆盖除宠物相关外的用户功能：壁纸库、过场、轮播组、玻璃、字体集、FX、3D 视差、声音/媒体集成、系统诊断和关于/许可。宠物、吉祥物、头像、pet-link 以及皮肤画廊/主题工坊不实现。
 
-完整安装、配色迁移、素材路径和终端透明边界见 [跨设备安装与迁移指南](docs/INSTALL.zh.md)。安装包不包含个人配置、截图、会话或 Steam 壁纸素材；本地素材和 Wallpaper Engine 项目需要在目标设备重新选择。
+逐项状态见 [DSHWE 功能对齐台账](docs/DSHWE-PARITY.zh.md)。
 
-## 壁纸与自定义主题
+## 许可
 
-打开“壁纸与背景控制”可自动扫描本机 Steam 库及 Wallpaper Engine 项目，按标题搜索、按类型筛选并选用壁纸；也可以手动选择库目录。不同项目使用以下播放方式：
+WebWallGL 3.0.1、dsh-wallpaper-engine 渲染适配和旧的 dsh-skins 解析器均保留原始 MIT/BSD/Apache 许可与来源说明；详见 [LICENSING.md](LICENSING.md)、[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) 和 `third_party/`。
 
-- **视频**项目通过 Hermes 本地 `hermes-media://stream` 协议用 `<video>` 播放。
-- **场景**项目由插件自带的场景后端（`backend/scene-helper.mjs`，PKG/TEX/MDL 解析）解包成缓存清单，再用内置 WebGL 播放器在隔离 iframe 中实时渲染——支持 2D 图层着色器、3D 场景、粒子与内嵌视频。宿主会把真实光标位置镜像进播放器，因此光标驱动效果可用：X-ray 图层会在光标周围显出底图（如蝴蝶掠过透视），被脚本设为靠近光标隐藏的图层会淡出并在光标离开后恢复。没有可渲染图层时退回播放内嵌视频，最后再退回解码出的全分辨率静帧。
-- **网页**项目把脚本、样式与资源内联进沙箱 iframe，并提供 Wallpaper Engine API 垫片；垫片会把镜像光标重发为 mousemove，因此靠近光标隐藏元素的页面表现与 Wallpaper Engine 一致。依赖未支持的 CEF 接口的页面可能呈现不同效果。
-
-场景解包依赖插件后端：`npm run install:desktop` 会把它部署到桌面插件旁。首次安装后需让 Hermes 本地后端重新启动以挂载场景接口。接口不可用时界面会报错。选用时引用库中的原文件，不复制项目；取消 Steam 订阅后该文件可能消失。
-
-手填地址仍支持 `http(s)`、`file:///` 和 Windows 本地绝对路径。直接读取本地图片失败时，插件会尝试 Hermes 文件桥；媒体最终加载失败则撤销透光样式，保持界面可读。
-
-工坊可保存并立即注册自定义配色，也可导出当前配色 JSON；导入会把导出文件的内容回填到表单，确认保存后注册为新皮肤。
-
-场景解析器、WebGL 播放器和网页壁纸垫片引用了 [dsh-skins](https://github.com/zhu1090093659/dsh-skins) 的源码；版本与许可见 [third_party/dsh-skins/NOTICE.md](third_party/dsh-skins/NOTICE.md)。设计还参考了 [hermes-skin-studio](https://github.com/weiweiplus0527/hermes-skin-studio)。
-
-开发时可运行 `npm run audit:wallpaper-engine`，只读统计本机可发现的项目类型。
+工坊壁纸素材不随插件分发；请只使用自己拥有或已获授权的素材。

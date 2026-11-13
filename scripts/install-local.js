@@ -25,7 +25,7 @@ const noEnable = args.has('--no-enable')
 const frontendNotices = LICENSE_FILES
 // Validate the whole payload before touching an existing installation.
 const required = ['plugin.js', ...frontendNotices.map(([source]) => source)]
-if (!frontendOnly) required.push(...['manifest.json', 'plugin_api.py', 'scene-helper.mjs', 'plugin.yaml', '__init__.py'].map(name => `backend/${name}`))
+if (!frontendOnly) required.push(...['manifest.json', 'plugin_api.py', 'scene-helper.mjs', 'scene_media.py', 'plugin.yaml', '__init__.py'].map(name => `backend/${name}`))
 for (const relative of required) {
   if (!fs.existsSync(path.join(rootDir, relative)) || !fs.statSync(path.join(rootDir, relative)).isFile()) {
     throw new Error(`Incomplete installation package: ${relative}`)
@@ -95,6 +95,15 @@ function copyWithBackup(sourceFile, targetFile) {
   }
   fs.copyFileSync(sourceFile, targetFile)
 }
+function copyTreeWithBackup(sourceDir, targetDir) {
+  fs.mkdirSync(targetDir, { recursive: true })
+  for (const entry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
+    const source = path.join(sourceDir, entry.name)
+    const target = path.join(targetDir, entry.name)
+    if (entry.isDirectory()) copyTreeWithBackup(source, target)
+    else if (entry.isFile()) copyWithBackup(source, target)
+  }
+}
 for (const [relative, name] of frontendNotices) copyWithBackup(path.join(rootDir, relative), path.join(targetDir, name))
 if (frontendOnly) {
   console.log('[install] Frontend-only installation complete. Reload desktop plugins; scene extraction backend was not installed.')
@@ -110,11 +119,12 @@ if (fs.existsSync(backendDir) && fs.lstatSync(backendDir).isSymbolicLink()) {
   throw new Error(`Refusing to install through a symbolic-link backend directory: ${backendDir}`)
 }
 fs.mkdirSync(backendDir, { recursive: true })
-for (const name of ['manifest.json', 'plugin_api.py', 'scene-helper.mjs']) {
+for (const name of ['manifest.json', 'plugin_api.py', 'scene-helper.mjs', 'scene_media.py']) {
   const sourceFile = path.join(rootDir, 'backend', name)
   if (!fs.existsSync(sourceFile)) throw new Error(`Missing built backend file: ${sourceFile}`)
   copyWithBackup(sourceFile, path.join(backendDir, name))
 }
+copyTreeWithBackup(path.join(rootDir, 'backend', 'webwallgl'), path.join(backendDir, 'webwallgl'))
 for (const [relative, name] of LICENSE_FILES) copyWithBackup(path.join(rootDir, relative), path.join(backendDir, name))
 // plugin.yaml + __init__.py make the plugin a first-class PluginManager
 // package, so the enable below goes through the official PM admission

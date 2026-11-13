@@ -6,11 +6,11 @@ import { normalizeConfig } from '../src/engine/config.js'
 const source = fs.readFileSync(new URL('../src/engine/storage-manager.js', import.meta.url), 'utf8')
   .replace(/^import .*$/gm, '').replace(/^export /gm, '')
 const atom = initial => ({ value: initial, get() { return this.value }, set(value) { this.value = value } })
-const { createSkinStore } = new Function('atom', 'normalizeConfig', 'ensurePaletteContrast', source + '\nreturn { createSkinStore }')(atom, normalizeConfig, colors => colors)
+const { createAppearanceStore } = new Function('atom', 'normalizeConfig', source + '\nreturn { createAppearanceStore }')(atom, normalizeConfig)
 
 function fixture() {
   const writes = []
-  const store = createSkinStore({ storage: { get: (_, fallback) => fallback, set: (_, value) => writes.push(value) } })
+  const store = createAppearanceStore({ storage: { get: (_, fallback) => fallback, set: (_, value) => writes.push(value) } })
   return { store, writes }
 }
 

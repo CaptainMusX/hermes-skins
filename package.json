@@ -1,7 +1,7 @@
 {
   "name": "hermes-skins",
-  "version": "1.3.7",
-  "description": "Skin Center and Custom Wallpaper/Backdrop Plugin for Hermes Desktop, inspired by dsh-skins",
+  "version": "2.0.0",
+  "description": "Wallpaper Engine and liquid-glass plugin for Hermes Desktop",
   "main": "plugin.js",
   "private": true,
   "type": "module",
@@ -18,9 +18,9 @@
     "hermes-desktop",
     "hermes-agent",
     "skins",
-    "themes",
     "wallpaper",
-    "skin-center",
+    "wallpaper-engine",
+    "liquid-glass",
     "ui-plugin"
   ],
   "author": "CaptainMusX",
