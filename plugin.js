@@ -1336,6 +1336,55 @@ function parseSerializedColor(text) {
   return null
 }
 
+const TRANSPARENT_TERMINAL = 'rgba(0, 0, 0, 0)'
+
+function isXtermTerminal(value) {
+  return Boolean(
+    value && typeof value === 'object' &&
+    value.options && value._core && typeof value.refresh === 'function' &&
+    value._core.optionsService &&
+    typeof value._core.optionsService.onSpecificOptionChange === 'function'
+  )
+}
+
+function isXtermAddon(value) {
+  return Boolean(
+    value && typeof value === 'object' &&
+    value._terminal && '_renderer' in value && typeof value.dispose === 'function'
+  )
+}
+
+/**
+ * Hermes constructs xterm with allowTransparency:false. Its public React tree
+ * still keeps both the Terminal and WebGL addon in refs, which is the only
+ * supported way to change the already-created renderer without rebuilding the
+ * host. Walk the owning fiber's hook list rather than guessing at minified
+ * component names, so a host refactor keeps working as long as the refs do.
+ */
+function findXtermTerminal(host) {
+  if (!host || typeof host !== 'object') return null
+  const fiberKey = Object.keys(host).find(name => name.startsWith('__reactFiber$'))
+  if (!fiberKey) return null
+  let fiber = host[fiberKey]
+  const seenFibers = new Set()
+  let terminal = null
+  let addon = null
+  for (let depth = 0; fiber && depth < 14; depth++, fiber = fiber.return) {
+    for (const candidate of [fiber, fiber.alternate]) {
+      if (!candidate || seenFibers.has(candidate)) continue
+      seenFibers.add(candidate)
+      let hook = candidate.memoizedState
+      for (let index = 0; hook && index < 80; index++, hook = hook.next) {
+        const value = hook.memoizedState?.current
+        if (!terminal && isXtermTerminal(value)) terminal = value
+        if (!addon && isXtermAddon(value)) addon = value
+        if (terminal && addon) return { terminal, addon }
+      }
+    }
+  }
+  return terminal ? { terminal, addon } : null
+}
+
 class GlassController {
   constructor() {
     this.styleEl = null
@@ -1348,6 +1397,8 @@ class GlassController {
     this.terminalThemeKey = null
     this.terminalBase = null
     this.terminalObserver = null
+    this.terminalRecords = new Map()
+    this.terminalHostStyles = new Map()
   }
 
   update({
@@ -1448,13 +1499,13 @@ class GlassController {
 
     // Terminal: xterm resolves --ui-terminal-surface-background to a concrete
     // color for its WebGL canvas, and the persistent host paints the same var
-    // inline. Unpatched hosts still construct xterm with allowTransparency
-    // false, so that internal var remains opaque for the canvas. The outer
-    // persistent container, however, can use a separate translucent tint and
-    // therefore joins the floating glass surfaces instead of painting a white
-    // plate. Patched hosts advertise data-hermes-terminal-alpha and get the
-    // alpha canvas as well. Both literals come from the live --ui-bg-chrome
-    // probe because xterm rejects color-mix/color(srgb) backgrounds.
+    // inline. Unpatched hosts construct xterm with allowTransparency:false, so
+    // CSS alone can only cover that opaque canvas, never reveal the wallpaper
+    // through it. applyTerminalSurface() flips the live renderer to alpha and
+    // the inner [data-terminal] owns the single glass fill; the outer persistent
+    // wrapper stays clear so the 45% tint is not compounded into ~70% white.
+    // Both literals come from the live --ui-bg-chrome probe because xterm
+    // rejects color-mix/color(srgb) backgrounds.
     const terminalAlpha = root.dataset?.hermesTerminalAlpha === 'true'
     const themeKey = `${root.dataset?.hermesTheme}:${root.dataset?.hermesMode}:${root.className}:${root.style?.cssText || ''}`
     const terminalCanvasBlend = isDark ? 'screen' : 'multiply'
@@ -1475,9 +1526,8 @@ class GlassController {
       }
       const base = this.terminalBase
       if (base) {
-        terminalTint = terminalAlpha ? 'transparent'
-          : `rgba(${base.r}, ${base.g}, ${base.b}, ${Math.max(32, keep) / 100})`
-        if (terminalAlpha) terminalSurface = `rgba(${base.r}, ${base.g}, ${base.b}, ${keep / 100})`
+        terminalTint = `rgba(${base.r}, ${base.g}, ${base.b}, ${keep / 100})`
+        terminalSurface = `rgba(${base.r}, ${base.g}, ${base.b}, ${keep / 100})`
       }
     }
 
@@ -1787,15 +1837,20 @@ class GlassController {
         backdrop-filter: var(--hermes-skins-overlay-frost) !important;
         -webkit-backdrop-filter: var(--hermes-skins-overlay-frost) !important;
       }
-      /* The persistent terminal host paints --ui-terminal-surface-background
-         inline and seals the box with contain:size layout paint. That paint
-         containment is an isolation boundary: a child canvas cannot blend with
-         the wallpaper through it. Remove those two host barriers, restate the
-         structural box with the shared glass tint, then composite the active
-         WebGL canvas (whose own opaque light/dark fill is baked per glyph cell)
-         with the theme-appropriate blend mode. Remote-screen sharing keeps its
-         real paint. */
-      :root[data-hermes-skins-active="true"] [data-persistent-terminal],
+      /* The persistent terminal host paints its opaque token inline and seals
+         the box with contain:size layout paint. Remove that isolation, keep
+         the outer positioning wrapper clear, and let the inner terminal own
+         exactly one glass fill. Stacking the same 45% tint on both wrappers
+         turns the panel into an almost-solid white plate. Remote-screen
+         sharing keeps its real paint. */
+      :root[data-hermes-skins-active="true"] [data-persistent-terminal] {
+        background-color: transparent !important;
+        border-radius: 10px;
+        contain: size layout !important;
+        isolation: auto !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+      }
       :root[data-hermes-skins-active="true"] [data-terminal]:not([data-remote-screen]) {
         background-color: var(--hermes-skins-terminal-tint, var(--hermes-skins-chrome-tint)) !important;
         border-radius: 10px;
@@ -1803,11 +1858,22 @@ class GlassController {
           inset 0 0 0 1px rgba(255, 255, 255, var(--hermes-skins-glass-border));
         contain: size layout !important;
         isolation: auto !important;
-        backdrop-filter: var(--hermes-skins-frost);
-        -webkit-backdrop-filter: var(--hermes-skins-frost);
+        /* The rest of the Hermes surface stack does not carry this extra
+           blur. A terminal-only blur turns the same 45% tint into a milky
+           plate and visibly separates the terminal from the sidebars. */
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
       }
-      :root[data-hermes-skins-active="true"] [data-persistent-terminal] :is(.xterm, .xterm-screen, .xterm-viewport),
-      :root[data-hermes-skins-active="true"] [data-terminal]:not([data-remote-screen]) :is(.xterm, .xterm-screen, .xterm-viewport),
+      /* The persistent terminal is a fixed overlay on top of the editor pane,
+         and that pane already paints the shared 45% glass. Painting the same
+         tint again here compounds two 45% veils into ~70% white. Keep only the
+         parent pane's single fill; the xterm canvas above it is transparent. */
+      :root[data-hermes-skins-active="true"] [data-persistent-terminal] [data-terminal]:not([data-remote-screen]) {
+        background-color: transparent !important;
+      }
+      :root[data-hermes-skins-active="true"] [data-persistent-terminal] :is(.xterm, .xterm-screen, .xterm-viewport, .xterm-scrollable-element),
+      :root[data-hermes-skins-active="true"] [data-terminal]:not([data-remote-screen]) :is(.xterm, .xterm-screen, .xterm-viewport, .xterm-scrollable-element),
+      :root[data-hermes-skins-active="true"] [class*="bg-(--ui-terminal-surface-background)"]:not([data-terminal]):not([data-persistent-terminal]),
       :root[data-hermes-skins-active="true"] [class*="[&_.xterm-screen]"][class*="bg-(--ui-terminal-surface-background)"],
       :root[data-hermes-skins-active="true"] [class*="[&_.xterm-viewport]"][class*="bg-(--ui-terminal-surface-background)"] {
         background-color: transparent !important;
@@ -1820,13 +1886,6 @@ class GlassController {
       :root[data-hermes-skins-active="true"] [data-terminal]:not([data-remote-screen]) .xterm-link-layer {
         mix-blend-mode: normal !important;
       }
-      ${terminalAlpha ? `
-      /* xterm's alpha canvas owns the tint. Its two outer wrappers must not
-         paint the same tint again or a 45% fill becomes an 83% solid plate. */
-      :root[data-hermes-skins-active="true"] [data-persistent-terminal],
-      :root[data-hermes-skins-active="true"] [data-terminal]:not([data-remote-screen]) {
-        background-color: transparent !important;
-      }` : ''}
       /* Composer: the fill joins the structural keep (one lever), and the
          frost sits ON the composer surface itself — backdrop-filter never
          touches an element's own content, so placeholder and typed text stay
@@ -1889,11 +1948,20 @@ class GlassController {
     for (const host of hosts) {
       if (!host?.style || typeof host.querySelectorAll !== 'function') continue
       if (host.dataset.hsTerminalOwned !== 'true') {
+        if (typeof host.style.getPropertyValue === 'function') {
+          this.terminalHostStyles.set(host, {
+            contain: host.style.getPropertyValue('contain'),
+            containPriority: host.style.getPropertyPriority('contain'),
+            isolation: host.style.getPropertyValue('isolation'),
+            isolationPriority: host.style.getPropertyPriority('isolation')
+          })
+        }
         host.dataset.hsTerminalOwned = 'true'
         host.style.setProperty('contain', 'size layout', 'important')
         host.style.setProperty('isolation', 'auto', 'important')
       }
-      const surfaces = host.querySelectorAll?.('.xterm, .xterm-screen, .xterm-viewport') || []
+      const alpha = this.ensureTerminalTransparency(host)
+      const surfaces = host.querySelectorAll?.('.xterm, .xterm-screen, .xterm-viewport, .xterm-scrollable-element') || []
       for (const surface of surfaces) {
         if (active) surface.style.setProperty('background-color', 'transparent', 'important')
         else surface.style.removeProperty('background-color')
@@ -1901,23 +1969,143 @@ class GlassController {
       const canvases = host.querySelectorAll?.('.xterm-screen canvas') || []
       for (const canvas of canvases) {
         if (active) canvas.style.setProperty('mix-blend-mode',
-          canvas.classList.contains('xterm-link-layer') ? 'normal' : blend, 'important')
+          canvas.classList.contains('xterm-link-layer') || alpha ? 'normal' : blend, 'important')
         else canvas.style.removeProperty('mix-blend-mode')
       }
     }
+    const shellSurfaces = []
+    if (root.matches?.('[class*="bg-(--ui-terminal-surface-background)"]') &&
+        !root.matches?.('[data-terminal], [data-persistent-terminal]')) shellSurfaces.push(root)
+    shellSurfaces.push(...(root.querySelectorAll?.('[class*="bg-(--ui-terminal-surface-background)"]') || []))
+    for (const surface of shellSurfaces) {
+      if (surface.matches?.('[data-terminal], [data-persistent-terminal]')) continue
+      if (active) surface.style.setProperty('background-color', 'transparent', 'important')
+      else surface.style.removeProperty('background-color')
+    }
+  }
+
+  ensureTerminalTransparency(host) {
+    const found = findXtermTerminal(host)
+    if (!found?.terminal) return false
+    const { terminal, addon } = found
+    let record = this.terminalRecords.get(terminal)
+    if (!record) {
+      record = {
+        terminal,
+        addon: null,
+        hostTheme: { ...(terminal.options?.theme || {}) },
+        originalAllowTransparency: terminal.options?.allowTransparency,
+        unsubscribe: null,
+        enforcing: false,
+        restoring: false
+      }
+      const optionsService = terminal._core?.optionsService
+      const subscription = optionsService?.onSpecificOptionChange?.('theme', () => {
+        if (record.restoring) return
+        const liveTheme = terminal.options?.theme
+        if (liveTheme && !record.enforcing) record.hostTheme = { ...liveTheme }
+        this.applyTerminalTransparency(record)
+      })
+      record.unsubscribe = typeof subscription === 'function'
+        ? subscription
+        : () => subscription?.dispose?.()
+      this.terminalRecords.set(terminal, record)
+    }
+    if (addon) record.addon = addon
+    this.applyTerminalTransparency(record)
+    host.dataset.hsTerminalAlpha = 'true'
+    return true
+  }
+
+  applyTerminalTransparency(record) {
+    if (!record || record.restoring || record.enforcing) return
+    const { terminal } = record
+    record.enforcing = true
+    let changed = false
+    try {
+      try {
+        if (terminal.options?.allowTransparency !== true) {
+          terminal.options.allowTransparency = true
+          changed = true
+        }
+      } catch {}
+      const theme = terminal.options?.theme || {}
+      if (theme.background !== TRANSPARENT_TERMINAL || theme.cursorAccent !== TRANSPARENT_TERMINAL) {
+        terminal.options.theme = {
+          ...theme,
+          background: TRANSPARENT_TERMINAL,
+          cursorAccent: TRANSPARENT_TERMINAL
+        }
+        changed = true
+      }
+      const renderer = record.addon?._renderer || terminal._core?._renderService?._renderer?.value
+      const atlasConfig = renderer?._charAtlas?._config
+      if (atlasConfig && atlasConfig.allowTransparency !== true) {
+        atlasConfig.allowTransparency = true
+        changed = true
+      }
+      const rectangleRenderer = renderer?._rectangleRenderer?.value || renderer?._rectangleRenderer
+      if (rectangleRenderer?._bgFloat?.[3] !== 0) {
+        rectangleRenderer._bgFloat[3] = 0
+        changed = true
+      }
+      if (changed) {
+        try { record.addon?.clearTextureAtlas?.() } catch {}
+        try { terminal.refresh(0, Math.max(0, terminal.rows - 1)) } catch {}
+      }
+    } finally {
+      record.enforcing = false
+    }
+  }
+
+  restoreTerminalTransparency() {
+    for (const record of this.terminalRecords.values()) {
+      record.restoring = true
+      try {
+        record.unsubscribe?.()
+        const { terminal } = record
+        try {
+          if (record.hostTheme && Object.keys(record.hostTheme).length) {
+            terminal.options.theme = { ...record.hostTheme }
+          }
+          terminal.options.allowTransparency = record.originalAllowTransparency
+        } catch {}
+        const renderer = record.addon?._renderer || terminal._core?._renderService?._renderer?.value
+        if (renderer?._charAtlas?._config) {
+          renderer._charAtlas._config.allowTransparency = record.originalAllowTransparency === true
+        }
+        try { record.addon?.clearTextureAtlas?.() } catch {}
+        try { terminal.refresh(0, Math.max(0, terminal.rows - 1)) } catch {}
+      } finally {
+        record.restoring = false
+      }
+    }
+    this.terminalRecords.clear()
   }
 
   releaseTerminalObserver() {
     this.terminalObserver?.disconnect()
     this.terminalObserver = null
+    this.restoreTerminalTransparency()
     if (typeof document === 'undefined' || typeof document.querySelectorAll !== 'function') return
     if (typeof document !== 'undefined') {
+      const restoreProperty = (host, name, value, priority) => {
+        if (value) host.style?.setProperty?.(name, value, priority)
+        else host.style?.removeProperty?.(name)
+      }
+      for (const [host, original] of this.terminalHostStyles) {
+        restoreProperty(host, 'contain', original.contain, original.containPriority)
+        restoreProperty(host, 'isolation', original.isolation, original.isolationPriority)
+      }
+      this.terminalHostStyles.clear()
       for (const host of document.querySelectorAll('[data-hs-terminal-owned]')) {
         delete host.dataset.hsTerminalOwned
-        host.style?.removeProperty?.('contain')
-        host.style?.removeProperty?.('isolation')
+        delete host.dataset.hsTerminalAlpha
       }
-      for (const surface of document.querySelectorAll('[data-terminal] .xterm, [data-terminal] .xterm-screen, [data-terminal] .xterm-viewport, [data-persistent-terminal] .xterm, [data-persistent-terminal] .xterm-screen, [data-persistent-terminal] .xterm-viewport')) {
+      for (const surface of document.querySelectorAll('[data-terminal] .xterm, [data-terminal] .xterm-screen, [data-terminal] .xterm-viewport, [data-terminal] .xterm-scrollable-element, [data-persistent-terminal] .xterm, [data-persistent-terminal] .xterm-screen, [data-persistent-terminal] .xterm-viewport, [data-persistent-terminal] .xterm-scrollable-element')) {
+        surface.style?.removeProperty?.('background-color')
+      }
+      for (const surface of document.querySelectorAll('[class*="bg-(--ui-terminal-surface-background)"]:not([data-terminal]):not([data-persistent-terminal])')) {
         surface.style?.removeProperty?.('background-color')
       }
       for (const canvas of document.querySelectorAll('[data-terminal] .xterm-screen canvas, [data-persistent-terminal] .xterm-screen canvas')) {

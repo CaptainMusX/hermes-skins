@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { GlassController, parseSerializedColor } from '../src/engine/glass-controller.js'
+import { GlassController, findXtermTerminal, parseSerializedColor } from '../src/engine/glass-controller.js'
 
 /** Minimal DOM fixture covering the surfaces GlassController touches. */
 function fixture({ terminalAlpha = false, resolvedColor = 'color(srgb 0.5 0.6 0.7)' } = {}) {
@@ -125,14 +125,16 @@ test('patched hosts get a comma-form rgba terminal literal wired to keep', () =>
   }
 })
 
-test('unpatched hosts keep the xterm canvas opaque but glass the outer terminal host', () => {
+test('unpatched hosts receive a runtime-alpha terminal with one glass fill', () => {
   const f = fixture({ terminalAlpha: false })
   try {
     const glass = new GlassController()
     glass.update({ enabled: true })
-    assert.ok(glass.styleEl.textContent.includes('--ui-terminal-surface-background: var(--ui-bg-chrome)'))
+    assert.ok(glass.styleEl.textContent.includes('--ui-terminal-surface-background: rgba(128, 153, 179, 0.9)'))
     assert.ok(glass.styleEl.textContent.includes('--hermes-skins-terminal-tint: rgba(128, 153, 179, 0.9)'))
+    assert.ok(glass.styleEl.textContent.includes('background-color: transparent !important'))
     assert.ok(glass.styleEl.textContent.includes('background-color: var(--hermes-skins-terminal-tint'))
+    assert.ok(glass.styleEl.textContent.includes('[data-persistent-terminal] [data-terminal]'))
     assert.ok(glass.styleEl.textContent.includes('contain: size layout !important'))
     assert.ok(glass.styleEl.textContent.includes('mix-blend-mode: var(--hermes-skins-terminal-canvas-blend, normal) !important'))
     assert.ok(glass.styleEl.textContent.includes('--hermes-skins-terminal-canvas-blend:'))
@@ -140,6 +142,31 @@ test('unpatched hosts keep the xterm canvas opaque but glass the outer terminal 
   } finally {
     f.restore()
   }
+})
+
+test('terminal refs are discovered through the owning React fiber without component-name coupling', () => {
+  const fakeTerminal = {
+    options: { theme: {}, allowTransparency: false },
+    _core: { optionsService: { onSpecificOptionChange: () => () => {} } },
+    refresh() {},
+    rows: 24
+  }
+  const fakeAddon = { _terminal: fakeTerminal, _renderer: {}, dispose() {} }
+  const componentFiber = {
+    memoizedState: {
+      memoizedState: { current: null },
+      next: {
+        memoizedState: { current: fakeTerminal },
+        next: { memoizedState: { current: fakeAddon }, next: null }
+      }
+    },
+    return: null,
+    alternate: null
+  }
+  const hostFiber = { memoizedState: null, return: componentFiber, alternate: null }
+  const host = { __reactFiber$test: hostFiber }
+  assert.deepEqual(findXtermTerminal(host), { terminal: fakeTerminal, addon: fakeAddon })
+  assert.equal(findXtermTerminal({}), null)
 })
 
 test('endpoint levers stay honest in the generated stylesheet', () => {
