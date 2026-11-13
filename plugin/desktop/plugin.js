@@ -4535,7 +4535,6 @@ function nextRotationGroupId() {
 
 // ─── Submodule: Wallpaper Engine Panel ───────────────────────
 const { WallpaperEnginePanel } = (() => {
-const PAGE_SIZE = 12
 const isZh = () => String(typeof document !== 'undefined'
   ? (document.documentElement?.lang || navigator.language || '')
   : (typeof navigator !== 'undefined' ? navigator.language : '')).toLowerCase().startsWith('zh')
@@ -4571,6 +4570,50 @@ function Chips({ values, selected, onToggle, label }) {
   }) })
 }
 
+function WallpaperThumb({ item, bridge }) {
+  const path = item.previewPath || (item.mediaType === 'image' ? item.mediaPath : null)
+  const [src, setSrc] = useState(() => path ? normalizeMediaSource(path) : null)
+  const [failed, setFailed] = useState(false)
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    setSrc(path ? normalizeMediaSource(path) : null)
+    setFailed(false)
+    setLoaded(false)
+  }, [path])
+
+  const fallback = async () => {
+    if (!path || !bridge?.readFileDataUrl || failed) {
+      setFailed(true)
+      return
+    }
+    try {
+      const data = await bridge.readFileDataUrl(path)
+      if (typeof data === 'string' && data.startsWith('data:image/')) {
+        setSrc(data)
+        return
+      }
+    } catch { /* Keep the no-preview placeholder. */ }
+    setFailed(true)
+  }
+
+  if (!src || failed) {
+    return jsx('span', {
+      className: 'absolute inset-0 grid place-items-center text-[10px] text-muted-foreground',
+      children: text('无预览', 'No preview')
+    })
+  }
+  return jsx('img', {
+    src,
+    alt: item.title,
+    loading: 'lazy',
+    decoding: 'async',
+    onLoad: () => setLoaded(true),
+    onError: () => void fallback(),
+    className: `absolute inset-0 size-full object-cover transition duration-300 group-hover:scale-[1.06] ${loaded ? 'opacity-100' : 'opacity-0'}`
+  })
+}
+
 function WallpaperEnginePanel({
   store, controller, openScene, loadUploads, importUploads, importUrl, importBing, compact = false
 }) {
@@ -4581,9 +4624,7 @@ function WallpaperEnginePanel({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [query, setQuery] = useState('')
-  const [page, setPage] = useState(0)
   const [showHidden, setShowHidden] = useState(false)
-  const [previews, setPreviews] = useState({})
   const [importingId, setImportingId] = useState(null)
   const [backendMissing, setBackendMissing] = useState(false)
   const [recoveringBackend, setRecoveringBackend] = useState(false)
@@ -4591,7 +4632,6 @@ function WallpaperEnginePanel({
   const [busyAction, setBusyAction] = useState('')
   const pendingScene = useRef(null)
   const scanRevision = useRef(0)
-  const previewCache = useRef(new Map())
   const bridge = typeof window !== 'undefined' ? window.hermesDesktop : null
   const rootsKey = config.weRoots.join('|')
 
@@ -4613,7 +4653,6 @@ function WallpaperEnginePanel({
       setItems(merged)
       store.setWeItems?.(merged)
       setLibraries(scan.libraries || [])
-      setPage(0)
       if (scan.error) setError(scan.error)
     } catch (cause) {
       if (revision === scanRevision.current) setError(String(cause?.message || cause))
@@ -4642,65 +4681,6 @@ function WallpaperEnginePanel({
     if (config.folderFilter !== 'all' && item.source !== config.folderFilter) return false
     return !query || item.title.toLocaleLowerCase().includes(query.toLocaleLowerCase())
   })
-  const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
-  const visible = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
-  const visiblePaths = visible.map(item => item.previewPath || item.mediaPath).join('|')
-
-  useEffect(() => {
-    if (!bridge?.readFileDataUrl) return
-    let cancelled = false
-    const fetchPreviews = async () => {
-      const loaded = {}
-      const publish = () => { if (!cancelled) setPreviews({ ...loaded }) }
-      for (const item of visible) {
-        const path = item.previewPath || item.mediaPath
-        const cached = previewCache.current.get(path)
-        if (cached) {
-          loaded[path] = cached
-          previewCache.current.delete(path)
-          previewCache.current.set(path, cached)
-        }
-      }
-      publish()
-      for (let start = 0; start < visible.length && !cancelled; start += 4) {
-        await Promise.all(visible.slice(start, start + 4).map(async item => {
-          const path = item.previewPath || item.mediaPath
-          if (loaded[path] || !/\.(png|jpe?g|webp|gif|bmp)$/i.test(path || '')) return
-          try {
-            if (window.location?.protocol === 'file:') {
-              const url = normalizeMediaSource(path)
-              if (url) {
-                const response = await fetch(url, { method: 'HEAD' })
-                if (response.ok) {
-                  loaded[path] = url
-                  previewCache.current.set(path, url)
-                  return
-                }
-              }
-            }
-          } catch { /* Fall through to the local bridge. */ }
-          if (cancelled) return
-          try {
-            const data = await bridge.readFileDataUrl(path)
-            if (!cancelled && typeof data === 'string' && data.startsWith('data:image/')) {
-              loaded[path] = data
-              previewCache.current.set(path, data)
-            }
-          } catch { /* Keep the inventory usable without a thumbnail. */ }
-        }))
-        let bytes = 0
-        for (const data of previewCache.current.values()) bytes += data.length * 2
-        while (previewCache.current.size > 36 || bytes > 24 * 1024 * 1024) {
-          const oldest = previewCache.current.keys().next().value
-          bytes -= previewCache.current.get(oldest).length * 2
-          previewCache.current.delete(oldest)
-        }
-        publish()
-      }
-    }
-    void fetchPreviews()
-    return () => { cancelled = true }
-  }, [visiblePaths])
 
   async function chooseFolder() {
     if (!bridge?.selectPaths) {
@@ -4829,7 +4809,7 @@ function WallpaperEnginePanel({
     const next = current.includes(value) ? current.filter(item => item !== value) : [...current, value]
     if (next.length) controller.changeConfig({ [key]: next })
   }
-  const cardHeight = config.pickerLayout === 'classic' ? 'aspect-video' : 'h-36'
+  const classic = config.pickerLayout === 'classic'
 
   return jsxs('section', {
     'data-hermes-skins-surface': '',
@@ -4861,7 +4841,8 @@ function WallpaperEnginePanel({
           onClick: () => void addBing(), children: busyAction === 'bing' ? '…' : 'Bing 每日一图' })
       ] }),
       jsx('p', { className: 'mt-3 text-xs text-muted-foreground',
-        children: loading ? t('weScanning') : t('weFound', items.length) }),
+        children: loading ? t('weScanning')
+          : `${t('weFound', items.length)} · ${text('点击卡片即应用，悬停显示隐藏按钮', 'Click a card to apply; hover to hide')}` }),
       error && jsx('p', { className: 'mt-2 text-xs text-destructive', children: error }),
       backendMissing && bridge?.api && jsx(Button, {
         size: 'sm', variant: 'outline', className: 'mt-2',
@@ -4874,7 +4855,7 @@ function WallpaperEnginePanel({
       jsxs('div', { className: 'mt-4 flex flex-col gap-2', children: [
         jsxs('div', { className: 'flex flex-wrap items-center gap-2', children: [
           jsx(Input, {
-            value: query, onChange: event => { setQuery(event.target.value); setPage(0) },
+            value: query, onChange: event => setQuery(event.target.value),
             placeholder: t('weSearch'), className: 'max-w-64', 'aria-label': t('weSearch')
           }),
           jsxs('select', {
@@ -4889,7 +4870,7 @@ function WallpaperEnginePanel({
           }),
           jsx(Button, {
             size: 'sm', variant: 'outline',
-            onClick: () => { setShowHidden(value => !value); setPage(0) },
+            onClick: () => setShowHidden(value => !value),
             children: showHidden ? t('weShowVisible', hiddenCount) : t('weShowHidden', hiddenCount)
           })
         ] }),
@@ -4909,64 +4890,94 @@ function WallpaperEnginePanel({
         ] })
       ] }),
       !loading && items.length === 0 && jsx('p', { className: 'mt-4 text-sm text-muted-foreground', children: t('weEmpty') }),
-      jsx('div', { className: 'mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3', children: visible.map(item => {
-        const selected = config.weSelection?.id === item.id
-        const hidden = hiddenIds.has(item.id)
-        const path = item.previewPath || item.mediaPath
-        const preview = previews[path]
-        return jsxs('article', {
-          key: item.id,
-          'data-hermes-skins-surface': '',
-          className: `overflow-hidden rounded-lg border bg-background ${selected ? 'border-primary' : 'border-border'}`,
-          children: [
-            preview
-              ? jsx('img', { src: preview, alt: '', loading: 'lazy', decoding: 'async',
-                  className: `${cardHeight} w-full object-cover` })
-              : item.mediaType === 'video' && normalizeMediaSource(item.mediaPath, 'video')
-                ? jsx('video', {
-                    src: normalizeMediaSource(item.mediaPath, 'video'), muted: true,
-                    preload: 'metadata', playsInline: true,
-                    className: `${cardHeight} w-full object-cover`
-                  })
-                : jsx('div', { className: `${cardHeight} bg-muted/40` }),
-            jsxs('div', { className: 'space-y-2 p-3', children: [
-              jsx('h3', { className: 'line-clamp-2 min-h-8 text-sm font-medium text-foreground', title: item.title, children: item.title }),
-              jsxs('p', { className: 'text-xs text-muted-foreground', children: [
-                kindLabel(item.kind),
-                item.source ? ` · ${item.source}` : '',
-                item.contentrating ? ` · ${item.contentrating}` : '',
-                item.staticFallback ? ` · ${t('weStaticFallback')}` : ''
-              ].join('') }),
-              hidden
-                ? jsxs('div', { className: 'flex gap-2', children: [
-                    jsx(Button, { size: 'sm', className: 'flex-1', variant: 'outline',
-                      onClick: () => toggleHidden(item, false), children: t('weRestore') }),
-                    jsx(Button, { size: 'sm', className: 'flex-1',
-                      disabled: Boolean(importingId) || recoveringBackend,
-                      onClick: () => void useWallpaper(item),
-                      children: importingId === item.id ? t('wePreparing') : t('weRestoreAndUse') })
-                  ] })
-                : jsxs('div', { className: 'flex gap-2', children: [
-                    jsx(Button, { size: 'sm', className: 'flex-1',
-                      disabled: Boolean(importingId) || recoveringBackend,
-                      variant: selected ? 'secondary' : 'default',
-                      onClick: () => void useWallpaper(item),
-                      children: importingId === item.id ? t('wePreparing') : selected ? t('weSelected') : t('weUse') }),
-                    jsx(Button, { size: 'sm', variant: 'outline',
-                      onClick: () => toggleHidden(item, true), children: t('weHide') })
-                  ] })
-            ] })
-          ]
+      jsxs('div', {
+        className: `mt-4 grid gap-2 overflow-y-auto overflow-x-hidden p-0.5 ${classic
+          ? 'max-h-[min(58vh,560px)] pb-10'
+          : 'max-h-[min(58vh,560px)]'}`,
+        style: {
+          gridTemplateColumns: classic
+            ? 'repeat(auto-fill, minmax(100px, 1fr))'
+            : 'repeat(auto-fill, minmax(120px, 1fr))',
+          scrollbarGutter: 'stable'
+        },
+        children: filtered.map(item => {
+          const selected = config.weSelection?.id === item.id
+          const hidden = hiddenIds.has(item.id)
+          const busy = importingId === item.id
+          const cardStyle = classic
+            ? { aspectRatio: '16 / 9', marginBottom: '-36px' }
+            : { height: '92px' }
+          return jsxs('div', {
+            key: item.id,
+            'data-wallpaper-id': item.id,
+            'data-hermes-skins-surface': '',
+            role: 'button',
+            tabIndex: 0,
+            'aria-pressed': selected,
+            'aria-label': hidden ? text(`恢复并应用 ${item.title}`, `Restore and apply ${item.title}`) : item.title,
+            title: item.title,
+            onClick: () => { if (!busy && !recoveringBackend) void useWallpaper(item) },
+            onKeyDown: event => {
+              if ((event.key === 'Enter' || event.key === ' ') && !busy && !recoveringBackend) {
+                event.preventDefault()
+                void useWallpaper(item)
+              }
+            },
+            className: `group relative cursor-pointer overflow-hidden rounded-lg border bg-muted/30 shadow-sm transition duration-150 ${classic
+              ? 'hover:z-10 hover:scale-[1.12] hover:shadow-xl'
+              : ''} ${selected
+              ? 'border-primary ring-2 ring-primary/55 shadow-[0_4px_16px_color-mix(in_srgb,var(--dt-primary)_30%,transparent)]'
+              : 'border-border hover:border-primary/50'} ${hidden ? 'opacity-75' : ''}`,
+            style: cardStyle,
+            children: [
+              jsx(WallpaperThumb, { item, bridge }),
+              jsx('span', {
+                className: 'pointer-events-none absolute left-1 top-1 z-[2] rounded bg-black/65 px-1.5 py-0.5 text-[10px] leading-4 text-white',
+                children: kindLabel(item.kind)
+              }),
+              (item.kind === 'scene' || item.kind === 'web') && !item.staticFallback && jsx('span', {
+                className: 'pointer-events-none absolute right-1 top-1 z-[1] rounded bg-sky-700/85 px-1.5 py-0.5 text-[9px] leading-4 text-white',
+                children: text('实时', 'Live')
+              }),
+              jsx('span', {
+                className: 'pointer-events-none absolute inset-x-0 bottom-0 z-[1] truncate bg-gradient-to-t from-black/85 via-black/55 to-transparent px-1.5 pb-1 pt-5 text-[11px] leading-4 text-white',
+                children: item.title
+              }),
+              jsx('button', {
+                type: 'button',
+                className: `absolute right-1 top-1 z-[3] rounded bg-black/70 px-1.5 py-0.5 text-[10px] text-white transition hover:bg-red-700/90 focus-visible:opacity-100 ${hidden ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'}`,
+                title: hidden ? text('恢复此壁纸', 'Restore this wallpaper') : text('隐藏此壁纸，可在“已隐藏”中恢复', 'Hide this wallpaper; restore it from the hidden view'),
+                onClick: event => {
+                  event.stopPropagation()
+                  toggleHidden(item, !hidden)
+                },
+                children: hidden ? t('weRestore') : t('weHide')
+              }),
+              busy && jsx('span', {
+                className: 'absolute inset-0 z-[4] grid place-items-center bg-black/55 text-[11px] text-white',
+                children: t('wePreparing')
+              }),
+              selected && jsx('span', {
+                className: 'pointer-events-none absolute bottom-1 right-1 z-[2] rounded bg-primary px-1.5 py-0.5 text-[9px] font-medium leading-4 text-primary-foreground',
+                children: t('weSelected')
+              })
+            ]
+          })
         })
-      }) }),
-      pages > 1 && jsxs('div', {
-        className: 'mt-4 flex items-center justify-end gap-2 text-xs text-muted-foreground',
+      }),
+      filtered.length === 0 && !loading && jsxs('div', {
+        className: 'mt-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed border-border px-3 py-2 text-xs text-muted-foreground',
         children: [
-          jsx(Button, { size: 'sm', variant: 'outline', disabled: page === 0,
-            onClick: () => setPage(page - 1), children: '←' }),
-          jsx('span', { children: `${page + 1} / ${pages}` }),
-          jsx(Button, { size: 'sm', variant: 'outline', disabled: page + 1 >= pages,
-            onClick: () => setPage(page + 1), children: '→' })
+          jsx('span', { children: query
+            ? text(`没有匹配「${query}」的壁纸`, `No wallpaper matches “${query}”`)
+            : showHidden ? text('没有已隐藏的壁纸', 'No hidden wallpapers')
+              : text('当前筛选条件下没有壁纸', 'No wallpapers match the current filters') }),
+          jsx('button', {
+            type: 'button',
+            className: 'text-foreground underline underline-offset-2',
+            onClick: () => { setQuery(''); setShowHidden(false) },
+            children: text('清除搜索与视图', 'Clear search and view')
+          })
         ]
       })
     ]

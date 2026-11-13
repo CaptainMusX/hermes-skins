@@ -57,7 +57,9 @@ function fixture({ needsRestart = false } = {}) {
     prepareScene: async dir => { if (!enabled) throw new Error('404: Plugin not found'); return { ok: true, manifest: true, manifestPath: `${dir}\\manifest.json`, framePath: `${dir}\\frame.png` } },
     openScene: async payload => { openings.push(payload.dir); if (!enabled) throw new Error('404: Plugin not found'); return { ok: true, dir: payload.dir, token: 'token', base: '/scene/files/token', file: 'scene.pkg' } } }
   const render = () => { cursor = 0; const tree = Component(props); effects.splice(0).forEach(effect => effect()); return tree }
-  const clickWallpaper = (tree, index = 0) => walk(tree).filter(n => n.type === Button && n.props.children === 'weUse')[index].props.onClick()
+  const clickWallpaper = (tree, index = 0) => walk(tree)
+    .filter(n => n.props?.['data-wallpaper-id'] && n.props.role === 'button' &&
+      n.props['aria-pressed'] !== true)[index].props.onClick()
   return { render, clickWallpaper, commits, openings, apiCalls, config: () => config,
     close() { hooks.forEach(h => h?.cleanup?.()); globalThis.window = previousWindow } }
 }
@@ -95,4 +97,23 @@ test('unmounted scene API after activation requests restart and keeps the curren
     assert.ok(walk(f.render()).some(n => n.props.children === 'weSceneBackendRestartRequired'))
     assert.equal(f.openings.length, 1, 'no blind retry against an unmounted route')
   } finally { f.close() }
+})
+
+test('wallpaper library uses the compact continuous DSH-style grid', async () => {
+  const f = fixture()
+  try {
+    f.render()
+    await settle()
+    const tree = walk(f.render())
+    const grid = tree.find(node => String(node.props?.style?.gridTemplateColumns || '')
+      .includes('repeat(auto-fill, minmax(120px, 1fr))'))
+    assert.ok(grid, 'fixed layout uses auto-fill 120px columns')
+    const cards = tree.filter(node => node.props?.['data-wallpaper-id'])
+    assert.equal(cards.length, 2)
+    assert.equal(cards[0].props.style.height, '92px')
+    assert.equal(cards[0].props.role, 'button')
+    assert.ok(!tree.some(node => node.props?.children === '←'), 'no pagination controls')
+  } finally {
+    f.close()
+  }
 })
