@@ -1655,6 +1655,15 @@ class GlassController {
       :root[data-hermes-skins-active="true"] body {
         background: transparent !important;
       }
+      /* Hermes dims an unfocused chat surface to opacity .62 and grayscales
+         its contents. The terminal pane has no equivalent treatment, so the
+         same wallpaper and the same structural glass produce a visibly
+         darker/weaker main pane only while chat is shown. A wallpaper plugin
+         owns the surface material, so suppress that focus-state scrim. */
+      :root[data-hermes-skins-active="true"] [data-chat-surface][data-chat-unfocused] {
+        opacity: 1 !important;
+        filter: none !important;
+      }
       /* Surfaces that mask sibling content keep their real paint (host
          contract — a see-through mask reads as text bleeding through text). */
       :root[data-hermes-skins-active="true"] [data-glass-opaque] {
@@ -1899,14 +1908,6 @@ class GlassController {
          parent pane's single fill; the xterm canvas above it is transparent. */
       :root[data-hermes-skins-active="true"] [data-persistent-terminal] [data-terminal]:not([data-remote-screen]) {
         background-color: transparent !important;
-        border: 0 !important;
-        border-radius: 0 !important;
-        box-shadow: none !important;
-        outline: none !important;
-        isolation: auto !important;
-        contain: none !important;
-        filter: none !important;
-        mix-blend-mode: normal !important;
       }
       /* WebGL xterm draws selections as opaque cell rectangles. A transparent
          renderer needs a soft, high-contrast selection tint that does not read
