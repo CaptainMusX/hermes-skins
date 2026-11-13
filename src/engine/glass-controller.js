@@ -41,6 +41,22 @@ export function parseSerializedColor(text) {
 }
 
 const TRANSPARENT_TERMINAL = 'rgba(0, 0, 0, 0)'
+const TERMINAL_SELECTION = '#4f8cff59'
+const TERMINAL_SELECTION_RGBA = 0x4f8cff59
+const TERMINAL_SELECTION_OPAQUE = '#c8dcff'
+const TERMINAL_SELECTION_OPAQUE_RGBA = 0xc8dcffff
+const TERMINAL_SELECTION_INACTIVE_OPAQUE = '#dbe7ff'
+const TERMINAL_SELECTION_INACTIVE_OPAQUE_RGBA = 0xdbe7ffff
+
+function terminalSelectionColor(opacity = 'transparent') {
+  if (opacity === 'opaque') {
+    return { css: TERMINAL_SELECTION_OPAQUE, rgba: TERMINAL_SELECTION_OPAQUE_RGBA }
+  }
+  if (opacity === 'inactive') {
+    return { css: TERMINAL_SELECTION_INACTIVE_OPAQUE, rgba: TERMINAL_SELECTION_INACTIVE_OPAQUE_RGBA }
+  }
+  return { css: TERMINAL_SELECTION, rgba: TERMINAL_SELECTION_RGBA }
+}
 
 function isXtermTerminal(value) {
   return Boolean(
@@ -575,6 +591,14 @@ export class GlassController {
       :root[data-hermes-skins-active="true"] [data-persistent-terminal] [data-terminal]:not([data-remote-screen]) {
         background-color: transparent !important;
       }
+      /* WebGL xterm draws selections as opaque cell rectangles. A transparent
+         renderer needs a soft, high-contrast selection tint that does not read
+         as a second solid plate over the wallpaper. */
+      :root[data-hermes-skins-active="true"] [data-terminal] ::selection,
+      :root[data-hermes-skins-active="true"] [data-persistent-terminal] ::selection {
+        background: ${TERMINAL_SELECTION_OPAQUE} !important;
+        color: inherit !important;
+      }
       :root[data-hermes-skins-active="true"] [data-persistent-terminal] :is(.xterm, .xterm-screen, .xterm-viewport, .xterm-scrollable-element),
       :root[data-hermes-skins-active="true"] [data-terminal]:not([data-remote-screen]) :is(.xterm, .xterm-screen, .xterm-viewport, .xterm-scrollable-element),
       :root[data-hermes-skins-active="true"] [class*="bg-(--ui-terminal-surface-background)"]:not([data-terminal]):not([data-persistent-terminal]),
@@ -699,6 +723,7 @@ export class GlassController {
         addon: null,
         hostTheme: { ...(terminal.options?.theme || {}) },
         originalAllowTransparency: terminal.options?.allowTransparency,
+        originalMinimumContrastRatio: terminal.options?.minimumContrastRatio,
         unsubscribe: null,
         enforcing: false,
         restoring: false
@@ -733,23 +758,53 @@ export class GlassController {
           changed = true
         }
       } catch {}
+      try {
+        if (terminal.options?.minimumContrastRatio !== 1) {
+          terminal.options.minimumContrastRatio = 1
+          changed = true
+        }
+      } catch {}
       const theme = terminal.options?.theme || {}
-      if (theme.background !== TRANSPARENT_TERMINAL || theme.cursorAccent !== TRANSPARENT_TERMINAL) {
+      if (
+        theme.background !== TRANSPARENT_TERMINAL ||
+        theme.cursorAccent !== TRANSPARENT_TERMINAL ||
+        theme.selectionBackground !== TERMINAL_SELECTION ||
+        theme.selectionInactiveBackground !== TERMINAL_SELECTION ||
+        theme.selectionForeground !== undefined
+      ) {
         terminal.options.theme = {
           ...theme,
           background: TRANSPARENT_TERMINAL,
-          cursorAccent: TRANSPARENT_TERMINAL
+          cursorAccent: TRANSPARENT_TERMINAL,
+          selectionBackground: TERMINAL_SELECTION,
+          selectionInactiveBackground: TERMINAL_SELECTION,
+          selectionForeground: undefined
         }
         changed = true
       }
       const renderer = record.addon?._renderer || terminal._core?._renderService?._renderer?.value
+      const colors = renderer?._themeService?._colors
+      if (colors) {
+        const selectionColors = {
+          selectionBackgroundTransparent: terminalSelectionColor(),
+          selectionBackgroundOpaque: terminalSelectionColor('opaque'),
+          selectionInactiveBackgroundTransparent: terminalSelectionColor(),
+          selectionInactiveBackgroundOpaque: terminalSelectionColor('inactive')
+        }
+        for (const [name, color] of Object.entries(selectionColors)) {
+          if (colors[name]?.rgba !== color.rgba) {
+            colors[name] = { ...color }
+            changed = true
+          }
+        }
+      }
       const atlasConfig = renderer?._charAtlas?._config
       if (atlasConfig && atlasConfig.allowTransparency !== true) {
         atlasConfig.allowTransparency = true
         changed = true
       }
       const rectangleRenderer = renderer?._rectangleRenderer?.value || renderer?._rectangleRenderer
-      if (rectangleRenderer?._bgFloat?.[3] !== 0) {
+      if (rectangleRenderer?._bgFloat?.[3] !== undefined && rectangleRenderer._bgFloat[3] !== 0) {
         rectangleRenderer._bgFloat[3] = 0
         changed = true
       }
@@ -773,6 +828,7 @@ export class GlassController {
             terminal.options.theme = { ...record.hostTheme }
           }
           terminal.options.allowTransparency = record.originalAllowTransparency
+          terminal.options.minimumContrastRatio = record.originalMinimumContrastRatio
         } catch {}
         const renderer = record.addon?._renderer || terminal._core?._renderService?._renderer?.value
         if (renderer?._charAtlas?._config) {

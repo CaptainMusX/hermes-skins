@@ -135,6 +135,8 @@ test('unpatched hosts receive a runtime-alpha terminal with one glass fill', () 
     assert.ok(glass.styleEl.textContent.includes('background-color: transparent !important'))
     assert.ok(glass.styleEl.textContent.includes('background-color: var(--hermes-skins-terminal-tint'))
     assert.ok(glass.styleEl.textContent.includes('[data-persistent-terminal] [data-terminal]'))
+    assert.ok(glass.styleEl.textContent.includes('::selection'))
+    assert.ok(glass.styleEl.textContent.includes('#c8dcff'))
     assert.ok(glass.styleEl.textContent.includes('contain: size layout !important'))
     assert.ok(glass.styleEl.textContent.includes('mix-blend-mode: var(--hermes-skins-terminal-canvas-blend, normal) !important'))
     assert.ok(glass.styleEl.textContent.includes('--hermes-skins-terminal-canvas-blend:'))
@@ -167,6 +169,56 @@ test('terminal refs are discovered through the owning React fiber without compon
   const host = { __reactFiber$test: hostFiber }
   assert.deepEqual(findXtermTerminal(host), { terminal: fakeTerminal, addon: fakeAddon })
   assert.equal(findXtermTerminal({}), null)
+})
+
+test('transparent terminals keep native foreground contrast and use one soft selection tint', () => {
+  const fakeColors = {}
+  const fakeTerminal = {
+    options: {
+      theme: { foreground: '#1f2328', selectionBackground: '#old' },
+      allowTransparency: false,
+      minimumContrastRatio: 4.5
+    },
+    _core: {
+      optionsService: { onSpecificOptionChange: () => () => {} },
+      _renderService: { _renderer: { value: { _themeService: { _colors: fakeColors } } } }
+    },
+    refresh() {},
+    rows: 24
+  }
+  const fakeAddon = { _terminal: fakeTerminal, _renderer: {}, dispose() {}, clearTextureAtlas() {} }
+  const componentFiber = {
+    memoizedState: {
+      memoizedState: { current: fakeTerminal },
+      next: { memoizedState: { current: fakeAddon }, next: null }
+    },
+    return: null,
+    alternate: null
+  }
+  const host = {
+    __reactFiber$test: { memoizedState: null, return: componentFiber, alternate: null },
+    dataset: {},
+    style: {
+      properties: new Map(),
+      setProperty(name, value, priority) { this.properties.set(name, [value, priority]) },
+      removeProperty(name) { this.properties.delete(name) },
+      getPropertyValue(name) { return this.properties.get(name)?.[0] || '' },
+      getPropertyPriority(name) { return this.properties.get(name)?.[1] || '' }
+    },
+    matches: () => true,
+    querySelectorAll: () => []
+  }
+  const glass = new GlassController()
+  glass.terminalRecords.clear()
+  glass.ensureTerminalTransparency(host)
+  assert.equal(fakeTerminal.options.minimumContrastRatio, 1)
+  assert.equal(fakeTerminal.options.theme.foreground, '#1f2328')
+  assert.equal(fakeTerminal.options.theme.selectionBackground, '#4f8cff59')
+  assert.equal(fakeTerminal.options.theme.selectionInactiveBackground, '#4f8cff59')
+  assert.equal(fakeTerminal.options.theme.selectionForeground, undefined)
+  glass.restoreTerminalTransparency()
+  assert.equal(fakeTerminal.options.minimumContrastRatio, 4.5)
+  assert.equal(fakeTerminal.options.allowTransparency, false)
 })
 
 test('endpoint levers stay honest in the generated stylesheet', () => {
