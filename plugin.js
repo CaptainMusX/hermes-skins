@@ -1347,6 +1347,7 @@ class GlassController {
     this.lastMaterialKey = null
     this.terminalThemeKey = null
     this.terminalBase = null
+    this.terminalObserver = null
   }
 
   update({
@@ -1373,6 +1374,7 @@ class GlassController {
       this.materialRule = null
       this.lastMaterialKey = null
       this.terminalThemeKey = null
+      this.releaseTerminalObserver()
       this.releaseRefitWatcher()
       return
     }
@@ -1446,22 +1448,21 @@ class GlassController {
 
     // Terminal: xterm resolves --ui-terminal-surface-background to a concrete
     // color for its WebGL canvas, and the persistent host paints the same var
-    // inline. With the host default (allowTransparency: false) an alpha color
-    // would paint opaque glyph-cell plates over a translucent viewport, so the
-    // var is pinned to the opaque chrome mix (the host's own glass mode does
-    // exactly this) and the terminal reads solid — no fake blend-mode
-    // transparency. Hosts patched by patches/hermes-desktop-terminal-alpha.patch
-    // advertise via the data-hermes-terminal-alpha attribute and get a real
-    // translucent mix. That mix must be a comma-form rgba() literal resolved
-    // through a live probe: the raw color-mix chain would reach xterm as
-    // "color(srgb …)" and paint the canvas black, and probing --ui-bg-chrome
-    // keeps the value tracking the official light/dark mode on every sync.
+    // inline. Unpatched hosts still construct xterm with allowTransparency
+    // false, so that internal var remains opaque for the canvas. The outer
+    // persistent container, however, can use a separate translucent tint and
+    // therefore joins the floating glass surfaces instead of painting a white
+    // plate. Patched hosts advertise data-hermes-terminal-alpha and get the
+    // alpha canvas as well. Both literals come from the live --ui-bg-chrome
+    // probe because xterm rejects color-mix/color(srgb) backgrounds.
     const terminalAlpha = root.dataset?.hermesTerminalAlpha === 'true'
     const themeKey = `${root.dataset?.hermesTheme}:${root.dataset?.hermesMode}:${root.className}:${root.style?.cssText || ''}`
-    const materialKey = `${keep}:${overlayKeep}:${bubbleKeep}:${composerBlur}:${surfaceBlur}:${overlayBlur}:${saturate}:${borderAlpha}:${highlightAlpha}:${terminalAlpha}:${accent}:${chosenGlassColor}:${fidelity}:${chatFidelity}:${sidebarGlass}:${sidebarFollowGlobal}:${sidebarBlur}:${sidebarAlpha}:${sidebarColor}:${leftSidebarGlass}:${leftSidebarCornerRadius}:${leftSidebarSquareTL}:${leftSidebarSquareTR}:${leftSidebarSquareBR}:${leftSidebarSquareBL}:${rightSidebarCornerRadius}:${rightSidebarSquareTL}:${rightSidebarSquareTR}:${rightSidebarSquareBR}:${rightSidebarSquareBL}:${titlebarGlass}:${themeKey}`
+    const terminalCanvasBlend = isDark ? 'screen' : 'multiply'
+    const materialKey = `${keep}:${overlayKeep}:${bubbleKeep}:${composerBlur}:${surfaceBlur}:${overlayBlur}:${saturate}:${borderAlpha}:${highlightAlpha}:${terminalAlpha}:${terminalCanvasBlend}:${accent}:${chosenGlassColor}:${fidelity}:${chatFidelity}:${sidebarGlass}:${sidebarFollowGlobal}:${sidebarBlur}:${sidebarAlpha}:${sidebarColor}:${leftSidebarGlass}:${leftSidebarCornerRadius}:${leftSidebarSquareTL}:${leftSidebarSquareTR}:${leftSidebarSquareBR}:${leftSidebarSquareBL}:${rightSidebarCornerRadius}:${rightSidebarSquareTL}:${rightSidebarSquareTR}:${rightSidebarSquareBR}:${rightSidebarSquareBL}:${titlebarGlass}:${themeKey}`
     if (this.lastMaterialKey === materialKey && this.styleEl.isConnected) return
     let terminalSurface = 'var(--ui-bg-chrome)'
-    if (terminalAlpha && document.body) {
+    let terminalTint = `color-mix(in srgb, var(--ui-bg-chrome) ${Math.max(32, keep)}%, transparent)`
+    if (document.body) {
       // The resolved theme color only changes with the host theme. Reusing it
       // avoids an append -> getComputedStyle -> remove flush on every drag.
       if (this.terminalThemeKey !== themeKey) {
@@ -1473,7 +1474,11 @@ class GlassController {
         this.terminalThemeKey = themeKey
       }
       const base = this.terminalBase
-      if (base) terminalSurface = `rgba(${base.r}, ${base.g}, ${base.b}, ${keep / 100})`
+      if (base) {
+        terminalTint = terminalAlpha ? 'transparent'
+          : `rgba(${base.r}, ${base.g}, ${base.b}, ${Math.max(32, keep) / 100})`
+        if (terminalAlpha) terminalSurface = `rgba(${base.r}, ${base.g}, ${base.b}, ${keep / 100})`
+      }
     }
 
     if (root.getAttribute?.('data-hermes-skins-active') !== 'true') root.setAttribute('data-hermes-skins-active', 'true')
@@ -1490,6 +1495,8 @@ class GlassController {
         '--hermes-skins-editor-tint': chromeTint,
         '--hermes-skins-frost': frost,
         '--hermes-skins-sidebar-frost': sidebarFrost,
+        '--hermes-skins-terminal-tint': terminalTint,
+        '--hermes-skins-terminal-canvas-blend': terminalCanvasBlend,
         '--hermes-skins-titlebar-tint': titlebarTint,
         '--hermes-skins-titlebar-frost': titlebarFrost,
         '--hermes-skins-overlay-frost': overlayFrost,
@@ -1524,6 +1531,8 @@ class GlassController {
         --hermes-skins-overlay-sidebar-tint: color-mix(in srgb, var(--ui-bg-sidebar) ${Math.max(25, overlayKeep - 40)}%, transparent);
         --hermes-skins-frost: ${frost};
         --hermes-skins-sidebar-frost: ${sidebarFrost};
+        --hermes-skins-terminal-tint: ${terminalTint};
+        --hermes-skins-terminal-canvas-blend: ${terminalCanvasBlend};
         --hermes-skins-titlebar-tint: ${titlebarTint};
         --hermes-skins-titlebar-frost: ${titlebarFrost};
         --hermes-skins-overlay-frost: ${overlayFrost};
@@ -1778,20 +1787,38 @@ class GlassController {
         backdrop-filter: var(--hermes-skins-overlay-frost) !important;
         -webkit-backdrop-filter: var(--hermes-skins-overlay-frost) !important;
       }
-      /* Terminal surfaces resolve through --ui-terminal-surface-background: the
-         fixed persistent host paints it inline and the xterm canvas paints the
-         resolved theme background, so the plugin never restates the fill here —
-         only the shared frost. On unpatched hosts the var is opaque and the
-         canvas is a solid plate; patched hosts get the translucent literal.
-         Remote-screen sharing must keep its real paint. */
+      /* The persistent terminal host paints --ui-terminal-surface-background
+         inline and seals the box with contain:size layout paint. That paint
+         containment is an isolation boundary: a child canvas cannot blend with
+         the wallpaper through it. Remove those two host barriers, restate the
+         structural box with the shared glass tint, then composite the active
+         WebGL canvas (whose own opaque light/dark fill is baked per glyph cell)
+         with the theme-appropriate blend mode. Remote-screen sharing keeps its
+         real paint. */
       :root[data-hermes-skins-active="true"] [data-persistent-terminal],
       :root[data-hermes-skins-active="true"] [data-terminal]:not([data-remote-screen]) {
+        background-color: var(--hermes-skins-terminal-tint, var(--hermes-skins-chrome-tint)) !important;
+        border-radius: 10px;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, var(--hermes-skins-glass-highlight)),
+          inset 0 0 0 1px rgba(255, 255, 255, var(--hermes-skins-glass-border));
+        contain: size layout !important;
+        isolation: auto !important;
         backdrop-filter: var(--hermes-skins-frost);
         -webkit-backdrop-filter: var(--hermes-skins-frost);
       }
       :root[data-hermes-skins-active="true"] [data-persistent-terminal] :is(.xterm, .xterm-screen, .xterm-viewport),
-      :root[data-hermes-skins-active="true"] [data-terminal]:not([data-remote-screen]) :is(.xterm, .xterm-screen, .xterm-viewport) {
+      :root[data-hermes-skins-active="true"] [data-terminal]:not([data-remote-screen]) :is(.xterm, .xterm-screen, .xterm-viewport),
+      :root[data-hermes-skins-active="true"] [class*="[&_.xterm-screen]"][class*="bg-(--ui-terminal-surface-background)"],
+      :root[data-hermes-skins-active="true"] [class*="[&_.xterm-viewport]"][class*="bg-(--ui-terminal-surface-background)"] {
         background-color: transparent !important;
+      }
+      :root[data-hermes-skins-active="true"] [data-persistent-terminal] :is(.xterm-screen, .xterm-viewport) :is(canvas, .xterm-link-layer),
+      :root[data-hermes-skins-active="true"] [data-terminal]:not([data-remote-screen]) :is(.xterm-screen, .xterm-viewport) :is(canvas, .xterm-link-layer) {
+        mix-blend-mode: var(--hermes-skins-terminal-canvas-blend, normal) !important;
+      }
+      :root[data-hermes-skins-active="true"] [data-persistent-terminal] .xterm-link-layer,
+      :root[data-hermes-skins-active="true"] [data-terminal]:not([data-remote-screen]) .xterm-link-layer {
+        mix-blend-mode: normal !important;
       }
       ${terminalAlpha ? `
       /* xterm's alpha canvas owns the tint. Its two outer wrappers must not
@@ -1825,7 +1852,78 @@ class GlassController {
     if (this.styleEl.textContent !== css) this.styleEl.textContent = css
     this.materialRule = this.styleEl.sheet?.cssRules?.[0]?.style || null
     this.lastMaterialKey = materialKey
+    this.syncTerminalObserver()
     this.syncTerminalRefitWatcher()
+  }
+
+  /** Hermes writes terminal backgrounds inline and xterm can replace its
+   *  canvases after mount. Reapply the two authoritative rules whenever that
+   *  subtree changes, so a hot reload cannot leave a white terminal plate. */
+  syncTerminalObserver() {
+    if (typeof MutationObserver !== 'function' || typeof document === 'undefined') return
+    if (this.terminalObserver) return
+    this.terminalObserver = new MutationObserver(entries => {
+      for (const entry of entries) {
+        const target = entry.target
+        if (!target || target.nodeType !== 1) continue
+        this.applyTerminalSurface(target)
+      }
+    })
+    this.terminalObserver.observe(document.body, {
+      attributes: true,
+      attributeFilter: ['style', 'class'],
+      childList: true,
+      subtree: true
+    })
+    this.applyTerminalSurface(document.body)
+  }
+
+  applyTerminalSurface(root) {
+    if (typeof document === 'undefined' || !root || typeof root.querySelectorAll !== 'function') return
+    const active = document.documentElement.getAttribute?.('data-hermes-skins-active') === 'true'
+    const blend = getComputedStyle(document.documentElement)
+      .getPropertyValue('--hermes-skins-terminal-canvas-blend').trim() || 'normal'
+    const hosts = []
+    if (root.matches?.('[data-terminal]:not([data-remote-screen]), [data-persistent-terminal]')) hosts.push(root)
+    hosts.push(...(root.querySelectorAll?.('[data-terminal]:not([data-remote-screen]), [data-persistent-terminal]') || []))
+    for (const host of hosts) {
+      if (!host?.style || typeof host.querySelectorAll !== 'function') continue
+      if (host.dataset.hsTerminalOwned !== 'true') {
+        host.dataset.hsTerminalOwned = 'true'
+        host.style.setProperty('contain', 'size layout', 'important')
+        host.style.setProperty('isolation', 'auto', 'important')
+      }
+      const surfaces = host.querySelectorAll?.('.xterm, .xterm-screen, .xterm-viewport') || []
+      for (const surface of surfaces) {
+        if (active) surface.style.setProperty('background-color', 'transparent', 'important')
+        else surface.style.removeProperty('background-color')
+      }
+      const canvases = host.querySelectorAll?.('.xterm-screen canvas') || []
+      for (const canvas of canvases) {
+        if (active) canvas.style.setProperty('mix-blend-mode',
+          canvas.classList.contains('xterm-link-layer') ? 'normal' : blend, 'important')
+        else canvas.style.removeProperty('mix-blend-mode')
+      }
+    }
+  }
+
+  releaseTerminalObserver() {
+    this.terminalObserver?.disconnect()
+    this.terminalObserver = null
+    if (typeof document === 'undefined' || typeof document.querySelectorAll !== 'function') return
+    if (typeof document !== 'undefined') {
+      for (const host of document.querySelectorAll('[data-hs-terminal-owned]')) {
+        delete host.dataset.hsTerminalOwned
+        host.style?.removeProperty?.('contain')
+        host.style?.removeProperty?.('isolation')
+      }
+      for (const surface of document.querySelectorAll('[data-terminal] .xterm, [data-terminal] .xterm-screen, [data-terminal] .xterm-viewport, [data-persistent-terminal] .xterm, [data-persistent-terminal] .xterm-screen, [data-persistent-terminal] .xterm-viewport')) {
+        surface.style?.removeProperty?.('background-color')
+      }
+      for (const canvas of document.querySelectorAll('[data-terminal] .xterm-screen canvas, [data-persistent-terminal] .xterm-screen canvas')) {
+        canvas.style?.removeProperty?.('mix-blend-mode')
+      }
+    }
   }
 
   /** xterm's WebGL canvas keeps its last fitted size; when a terminal pane
@@ -1877,6 +1975,7 @@ class GlassController {
   }
 
   destroy() {
+    this.releaseTerminalObserver()
     this.releaseRefitWatcher()
     this.update({ enabled: false })
   }

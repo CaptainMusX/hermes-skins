@@ -28,6 +28,7 @@ function fixture({ terminalAlpha = false, resolvedColor = 'color(srgb 0.5 0.6 0.
   const documentMock = {
     documentElement: root, head, body,
     getElementById: () => null,
+    querySelectorAll: () => [],
     createElement: tag => { const el = makeElement(tag); created.push(el); return el }
   }
   const windowMock = {
@@ -36,20 +37,31 @@ function fixture({ terminalAlpha = false, resolvedColor = 'color(srgb 0.5 0.6 0.
     removeEventListener(name, fn) { if (this.listeners.get(name) === fn) this.listeners.delete(name) },
     dispatchEvent(event) { this.listeners.get(event.type)?.(event); return true }
   }
+  const mutationObservers = []
+  globalThis.MutationObserver = class {
+    constructor(callback) { this.callback = callback; mutationObservers.push(this) }
+    observe(target, options) { this.target = target; this.options = options }
+    disconnect() { this.disconnected = true }
+  }
   const previous = {
     document: globalThis.document,
     window: globalThis.window,
-    getComputedStyle: globalThis.getComputedStyle
+    getComputedStyle: globalThis.getComputedStyle,
+    MutationObserver: globalThis.MutationObserver
   }
   globalThis.document = documentMock
   globalThis.window = windowMock
-  globalThis.getComputedStyle = () => ({ backgroundColor: resolvedColor })
+  globalThis.getComputedStyle = () => ({
+    backgroundColor: resolvedColor,
+    getPropertyValue: name => name === '--hermes-skins-terminal-canvas-blend' ? 'screen' : ''
+  })
   return {
-    root, head, created, windowMock,
+    root, head, created, windowMock, mutationObservers,
     restore: () => {
       globalThis.document = previous.document
       globalThis.window = previous.window
       globalThis.getComputedStyle = previous.getComputedStyle
+      globalThis.MutationObserver = previous.MutationObserver
     }
   }
 }
@@ -113,13 +125,18 @@ test('patched hosts get a comma-form rgba terminal literal wired to keep', () =>
   }
 })
 
-test('unpatched hosts keep the opaque terminal var', () => {
+test('unpatched hosts keep the xterm canvas opaque but glass the outer terminal host', () => {
   const f = fixture({ terminalAlpha: false })
   try {
     const glass = new GlassController()
     glass.update({ enabled: true })
     assert.ok(glass.styleEl.textContent.includes('--ui-terminal-surface-background: var(--ui-bg-chrome)'))
-    assert.equal(f.created.filter(el => el.tagName === 'span').length, 0, 'no probe runs without the host patch')
+    assert.ok(glass.styleEl.textContent.includes('--hermes-skins-terminal-tint: rgba(128, 153, 179, 0.9)'))
+    assert.ok(glass.styleEl.textContent.includes('background-color: var(--hermes-skins-terminal-tint'))
+    assert.ok(glass.styleEl.textContent.includes('contain: size layout !important'))
+    assert.ok(glass.styleEl.textContent.includes('mix-blend-mode: var(--hermes-skins-terminal-canvas-blend, normal) !important'))
+    assert.ok(glass.styleEl.textContent.includes('--hermes-skins-terminal-canvas-blend:'))
+    assert.equal(f.created.filter(el => el.tagName === 'span').length, 1, 'one probe resolves the theme chrome')
   } finally {
     f.restore()
   }
@@ -201,6 +218,47 @@ test('terminal boxes are observed and a real teardown releases the watcher', asy
     assert.equal(observers[0].disconnected, true, 'teardown releases the refit watcher')
   } finally {
     globalThis.ResizeObserver = previousObserver
+    f.restore()
+  }
+})
+
+test('terminal xterm descendants receive glass surface styles dynamically', () => {
+  const f = fixture()
+  try {
+    const glass = new GlassController()
+    glass.update({ enabled: true })
+    assert.equal(f.mutationObservers.length, 1)
+    f.root.setAttribute('data-hermes-skins-active', 'true')
+    f.root.getAttribute = name => f.root.attributes[name]
+    const host = { ...f.root }
+    host.style = { ...f.root.style }
+    host.dataset = { ...f.root.dataset }
+    host.matches = selector => selector.includes('[data-terminal]')
+    host.style.properties = new Map()
+    host.style.setProperty = (name, value, priority) => host.style.properties.set(name, [value, priority])
+    host.style.removeProperty = name => host.style.properties.delete(name)
+    const screen = {
+      style: {
+        properties: new Map(),
+        setProperty(name, value, priority) { this.properties.set(name, [value, priority]) },
+        removeProperty(name) { this.properties.delete(name) }
+      }
+    }
+    const canvas = {
+      classList: { contains: () => false },
+      style: {
+        properties: new Map(),
+        setProperty(name, value, priority) { this.properties.set(name, [value, priority]) },
+        removeProperty(name) { this.properties.delete(name) }
+      }
+    }
+    host.querySelectorAll = selector => selector.includes('canvas') ? [canvas] : [screen]
+    glass.applyTerminalSurface(host)
+    assert.deepEqual(screen.style.properties.get('background-color'), ['transparent', 'important'])
+    assert.deepEqual(canvas.style.properties.get('mix-blend-mode'), ['screen', 'important'])
+    glass.destroy()
+    assert.equal(f.mutationObservers[0].disconnected, true)
+  } finally {
     f.restore()
   }
 })
