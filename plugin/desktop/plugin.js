@@ -1899,6 +1899,14 @@ class GlassController {
          parent pane's single fill; the xterm canvas above it is transparent. */
       :root[data-hermes-skins-active="true"] [data-persistent-terminal] [data-terminal]:not([data-remote-screen]) {
         background-color: transparent !important;
+        border: 0 !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+        outline: none !important;
+        isolation: auto !important;
+        contain: none !important;
+        filter: none !important;
+        mix-blend-mode: normal !important;
       }
       /* WebGL xterm draws selections as opaque cell rectangles. A transparent
          renderer needs a soft, high-contrast selection tint that does not read
